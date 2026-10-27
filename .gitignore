@@ -1,0 +1,22 @@
+# Installed per computer (run.bat / setup.sh create them)
+.venv/
+.venv-linux/
+runtime/
+
+# Large downloads: attached to each GitHub release as CinemaViewer-vendor-<versie>.zip
+vendor/
+
+# Test VMs and ISOs
+vm/
+
+# Python / editors
+__pycache__/
+*.pyc
+.idea/
+.vscode/
+
+# Left behind by an interrupted update
+.cinemaviewer.new/
+.cinemaviewer.old/
+.tools.new/
+.tools.old/

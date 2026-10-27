@@ -1,0 +1,5 @@
+PySide6>=6.7
+python-vlc>=3.0.20000
+truststore>=0.10
+pyserial>=3.5
+yt-dlp>=2025.1

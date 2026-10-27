@@ -1,0 +1,192 @@
+[
+ {
+  "name": "NPO Radio 1",
+  "url": "http://icecast.omroep.nl/radio1-bb-mp3",
+  "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/da/NPO_Radio_1_logo_2014.svg/500px-NPO_Radio_1_logo_2014.svg.png",
+  "uuid": "96126f56-0601-11e8-ae97-52543be04c81",
+  "tags": "news",
+  "codec": "MP3",
+  "bitrate": 192,
+  "country": "NL"
+ },
+ {
+  "name": "NPO Radio 2",
+  "url": "http://icecast.omroep.nl/radio2-bb-mp3",
+  "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/f/f4/NPO_Radio_2_logo.svg/500px-NPO_Radio_2_logo.svg.png",
+  "uuid": "96126e82-0601-11e8-ae97-52543be04c81",
+  "tags": "evergreens,talk",
+  "codec": "MP3",
+  "bitrate": 192,
+  "country": "NL"
+ },
+ {
+  "name": "NPO 3FM",
+  "url": "https://icecast.omroep.nl/3fm-bb-mp3",
+  "logo": "https://www.npo3fm.nl/apple-touch-icon.png",
+  "uuid": "0c62b9d7-8de0-4693-9842-6bf9b50229d3",
+  "tags": "pop",
+  "codec": "MP3",
+  "bitrate": 192,
+  "country": "NL"
+ },
+ {
+  "name": "NPO Klassiek",
+  "url": "https://icecast.omroep.nl/radio4-bb-mp3",
+  "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c7/NPO_Klassiek_logo.svg/500px-NPO_Klassiek_logo.svg.png",
+  "uuid": "428fecbf-d5e2-4c30-bcde-6dd98b125434",
+  "tags": "classical,klassiek",
+  "codec": "MP3",
+  "bitrate": 192,
+  "country": "NL"
+ },
+ {
+  "name": "NPO Radio 5",
+  "url": "https://icecast.omroep.nl/radio5-bb-mp3",
+  "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/0/08/NPO_Radio_5_logo_2016.svg/500px-NPO_Radio_5_logo_2016.svg.png",
+  "uuid": "46e55863-cef7-4f50-954e-3fa7feede49f",
+  "tags": "60's,70's,80's,evergreens",
+  "codec": "MP3",
+  "bitrate": 192,
+  "country": "NL"
+ },
+ {
+  "name": "NPO Soul & Jazz",
+  "url": "https://playerservices.streamtheworld.com/api/livestream-redirect/TLPSTR04.mp3",
+  "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8d/NPO_Soul_%26_Jazz_logo_2023.png/500px-NPO_Soul_%26_Jazz_logo_2023.png",
+  "uuid": "b87ea3cc-e66b-4968-b2bd-4b0edfeb1589",
+  "tags": "",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "Radio 538",
+  "url": "http://playerservices.streamtheworld.com/api/livestream-redirect/RADIO538.mp3",
+  "logo": "https://www.538.nl/favicon.ico",
+  "uuid": "fd059cc5-b538-41c1-ae76-b8778a84c3db",
+  "tags": "",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "Qmusic",
+  "url": "https://icecast-qmusicnl-cdp.triple-it.nl/Qmusic_nl_live.mp3",
+  "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/7/70/Qmusic_logo.svg/500px-Qmusic_logo.svg.png",
+  "uuid": "c0357737-c4b3-4237-b8e9-1b14db02c157",
+  "tags": "mix,pop,top 40",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "Sky Radio",
+  "url": "https://www.mp3streams.nl/zender/skyradio/stream/8-mp3-128",
+  "logo": "https://www.skyradio.nl/favicon.ico",
+  "uuid": "b20de429-e1b3-4624-a1ac-12e2bf0cadb0",
+  "tags": "",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "Radio 10",
+  "url": "http://playerservices.streamtheworld.com/api/livestream-redirect/RADIO10.mp3",
+  "logo": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/19/Radio_10_logo_2019.svg/500px-Radio_10_logo_2019.svg.png",
+  "uuid": "d227990c-2385-4419-8159-1c73a33a58dd",
+  "tags": "00's,80's,90's,classic hits",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "Radio Veronica",
+  "url": "https://19993.live.streamtheworld.com/VERONICA_SC",
+  "logo": "",
+  "uuid": "416df3af-c4ed-44d2-a405-7417b17d2e0a",
+  "tags": "pop",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "100% NL",
+  "url": "http://stream.100p.nl/100pctnl.mp3",
+  "logo": "",
+  "uuid": "960f36b5-0601-11e8-ae97-52543be04c81",
+  "tags": "",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "SLAM!",
+  "url": "http://stream.slam.nl/slam",
+  "logo": "https://www.slam.nl/favicon.ico",
+  "uuid": "962e7e22-0601-11e8-ae97-52543be04c81",
+  "tags": "dance,electro,house,pop",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "KINK",
+  "url": "https://playerservices.streamtheworld.com/api/livestream-redirect/KINK.mp3",
+  "logo": "https://kink.nl/static/apple-touch-icon.png",
+  "uuid": "c19d0f8c-24a5-11e9-a80b-52543be04c81",
+  "tags": "",
+  "codec": "MP3",
+  "bitrate": 192,
+  "country": "NL"
+ },
+ {
+  "name": "JOE",
+  "url": "https://icecast-qmusicnl-cdp.triple-it.nl/Joe_nl.mp3?aw_0_1st.playerId=redirect",
+  "logo": "https://cdn-radio.dpgmedia.net/c/16/a5/32/31/JOE-4-WEBSITE-220x220.png",
+  "uuid": "e5119b67-3e02-434f-9c8e-e0e7d39baa24",
+  "tags": "",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "Arrow Classic Rock",
+  "url": "http://stream.gal.io/arrow",
+  "logo": "https://www.arrow.nl/wp-content/uploads/2020/08/logo.png",
+  "uuid": "db93a00f-9191-46ab-9e87-ec9b373b3eee",
+  "tags": "",
+  "codec": "MP3",
+  "bitrate": 192,
+  "country": "NL"
+ },
+ {
+  "name": "BNR Nieuwsradio",
+  "url": "https://stream.bnr.nl/bnr_mp3_128_20",
+  "logo": "https://static.bnr.nl/assets/bnr-next/logo.png",
+  "uuid": "da5d71d1-d8cc-4301-9f86-b6abaa1201bd",
+  "tags": "business,news,talk",
+  "codec": "MP3",
+  "bitrate": 128,
+  "country": "NL"
+ },
+ {
+  "name": "Sublime",
+  "url": "https://playerservices.streamtheworld.com/api/livestream-redirect/SUBLIME.mp3",
+  "logo": "https://6nl7xj2ntppk.b-cdn.net/73cf20f2-a361-480b-bc2f-bec43b6a2bd5",
+  "uuid": "cfd71b17-5765-4365-8425-09a2073bf222",
+  "tags": "",
+  "codec": "MP3",
+  "bitrate": 192,
+  "country": "NL"
+ },
+ {
+  "name": "NPO FunX",
+  "url": "http://icecast.omroep.nl/funx-bb-mp3",
+  "logo": "https://www.funx.nl/apple-touch-icon.png",
+  "uuid": "960e4318-0601-11e8-ae97-52543be04c81",
+  "tags": "urban",
+  "codec": "MP3",
+  "bitrate": 192,
+  "country": "NL"
+ }
+]
