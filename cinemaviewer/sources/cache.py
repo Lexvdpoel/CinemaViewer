@@ -16,7 +16,7 @@ import urllib.request
 from pathlib import Path
 
 from ..config import CACHE_DIR
-from ..models import SOURCE_LABELS, MediaItem
+from ..models import SOURCE_LABELS, MediaItem, fmt_size
 from ..net import SSL_CONTEXT, USER_AGENT
 
 META = "item.json"
@@ -26,6 +26,7 @@ CATEGORIES = ("Films", "Series", "Muziek", "Overig")
 # Folder kinds by depth below a category (for icons and the grid): Series/<serie>/<seizoen>
 FOLDER_KINDS = {"Series": ("series", "season"), "Muziek": ("artist", "album")}
 MAX_NAME = 50  # keeps the full path well within Windows' 260 characters
+RESERVE = 2 * 1024 ** 3  # always left free on the bibliotheek's disk (the system needs room too)
 _LEGACY = re.compile(r"^(jellyfin|plex)-.+")            # before the indeling: cache/<bron>-<id>/
 _EPISODE_CODE = re.compile(r"^(?P<series>.*?)\s*·\s*S(?P<season>\d+)E(?P<episode>\d+)$")
 
@@ -210,12 +211,32 @@ def remove(item):
     return size
 
 
-def usage():
-    """Free space on the cache disk, and what the bibliotheek (and its watched part) takes."""
+def _disk():
     base = CACHE_DIR
     while not base.exists() and base != base.parent:
         base = base.parent
-    disk = shutil.disk_usage(base)
+    return shutil.disk_usage(base)
+
+
+class NotEnoughSpace(OSError):
+    """The download or copy does not fit on the bibliotheek's disk (keeping RESERVE free)."""
+
+
+def ensure_space(needed=0):
+    """Raise NotEnoughSpace unless `needed` bytes fit while RESERVE stays free."""
+    free = _disk().free
+    if needed + RESERVE > free:
+        room = max(0, free - RESERVE)
+        raise NotEnoughSpace(
+            (f"te weinig schijfruimte: nodig {fmt_size(needed)}, beschikbaar {fmt_size(room)}" if needed
+             else f"te weinig schijfruimte: nog {fmt_size(free)} vrij")
+            + f" (er blijft altijd {fmt_size(RESERVE)} vrij voor het systeem). Verwijder eerst iets uit de "
+            "bibliotheek, bv. met ‘Gekeken verwijderen’.")
+
+
+def usage():
+    """Free space on the cache disk, and what the bibliotheek (and its watched part) takes."""
+    disk = _disk()
     size = watched_size = watched = count = 0
     for folder in _item_folders():
         folder_size = _size(folder)
@@ -272,6 +293,7 @@ def download(src, item, on_progress=None, cancel=None):
         url = src.play_url(item)
         with _open(url) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
+            ensure_space(total)  # before a single byte is written
             suffix = Path(urllib.parse.urlparse(url).path).suffix.lower()
             if suffix not in EXTENSIONS:
                 suffix = ".mp4"
@@ -284,6 +306,8 @@ def download(src, item, on_progress=None, cancel=None):
                         break
                     fh.write(chunk)
                     done += len(chunk)
+                    if not total and done % (256 * 1024 * 1024) < len(chunk):
+                        ensure_space()  # size unknown beforehand: stop before the disk fills up
                     if on_progress:
                         on_progress(done, total)
             if total and done != total:
@@ -373,8 +397,7 @@ def import_local(item, info, on_progress=None, cancel=None):
     else:
         files = [(src, Path("media" + src.suffix.lower()))]
     total = sum(p.stat().st_size for p, _ in files)
-    if total > shutil.disk_usage(CACHE_DIR.parent if not CACHE_DIR.exists() else CACHE_DIR).free:
-        raise OSError("niet genoeg vrije ruimte op de schijf van de bibliotheek")
+    ensure_space(total)
     meta = {
         "source": "local", "source_id": _source_id(item), "kind": item.kind, "title": info["title"] or item.title,
         "year": info.get("year"), "overview": item.overview, "genres": item.genres, "rating": item.rating,

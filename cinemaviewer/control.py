@@ -448,6 +448,10 @@ class DetailsPanel(QWidget):
         item = self.item
         if item is None or self._downloading or self.app.is_cached(item):
             return
+        problem = self.app.cache_space_problem()
+        if problem:
+            self.app.control.toast(problem[0].upper() + problem[1:], ms=10000)
+            return
         progress = lambda done, total: self.cache_progress.emit(done, total)  # noqa: E731
         if item.source == "local":
             dlg = ImportDialog(item, cache_guess(item), self.app.control)

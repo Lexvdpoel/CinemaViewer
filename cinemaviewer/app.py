@@ -434,6 +434,14 @@ class CinemaApp(QObject):
 
         run_async(cache_source.import_local, done, on_error, item, info, on_progress, cancel)
 
+    def cache_space_problem(self):
+        """Text when the bibliotheek's disk is (nearly) full, else ''."""
+        try:
+            cache_source.ensure_space()
+        except OSError as e:
+            return str(e)
+        return ""
+
     def cache_usage(self):
         try:
             return cache_source.usage()
