@@ -246,6 +246,11 @@ class ShareDialog(FramelessDialog):
         form.addRow("Naam", self.ed_name)
         self._form = form
         lay.addLayout(form)
+        self.nfs_note = _status(
+            "NFS werkt zonder gebruikersnaam en wachtwoord: de NAS bepaalt de toegang op het IP-adres van deze pc. "
+            "Zet bij de NFS-instellingen van de NAS dit IP-adres (of het hele thuisnetwerk) op ‘lezen’ of "
+            "‘lezen/schrijven’. Wil je inloggen met een gebruiker, kies dan SMB.")
+        lay.addWidget(self.nfs_note)
         self.error = _status("", ok=False)
         self.error.hide()
         lay.addWidget(self.error)
@@ -269,6 +274,7 @@ class ShareDialog(FramelessDialog):
         for widget in (self.ed_user, self.ed_password):
             widget.setVisible(smb)
             self._form.labelForField(widget).setVisible(smb)
+        self.nfs_note.setVisible(not smb)
 
     def _accept(self):
         server = self.ed_server.text().strip().strip("\\/")
