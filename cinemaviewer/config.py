@@ -62,7 +62,7 @@ DEFAULTS = {
     # Passwords are not kept here (Windows Credential Manager / root-only file on Linux).
     "network_shares": [],
     # Updates from GitHub releases: repo "eigenaar/naam", read-only token for a private repository.
-    "updates": {"repo": "", "token": "", "check_at_start": True},
+    "updates": {"repo": "Lexvdpoel/CinemaViewer", "token": "", "check_at_start": True},
     "radio": {"enabled": True, "stations": None},   # stations None = the ready-made Dutch list
     # Displaycast (YouTube 'Link with TV code' + DLNA): ids are kept so phones stay paired
     "displaycast": {"name": "", "autostart": False, "port": 47801, "screen_id": "", "device_id": "",
