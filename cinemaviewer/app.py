@@ -411,14 +411,14 @@ class CinemaApp(QObject):
     def is_cached(self, item):
         return item.source in ("plex", "jellyfin", "local") and cache_source.is_cached(item)
 
-    def cache_download(self, item, on_progress, on_done, on_error):
+    def cache_download(self, item, on_progress, on_done, on_error, cancel=None):
         src = self.sources.get(item.source)
         if src is None:
             on_error("Deze bron is niet beschikbaar.")
             return
 
         def work():
-            return cache_source.download(src, item, on_progress)
+            return cache_source.download(src, item, on_progress, cancel)
 
         def done(folder):
             self.control.set_libraries("cache", self.sources["cache"].libraries())
@@ -426,13 +426,13 @@ class CinemaApp(QObject):
 
         run_async(work, done, on_error)
 
-    def cache_import(self, item, info, on_progress, on_done, on_error):
+    def cache_import(self, item, info, on_progress, on_done, on_error, cancel=None):
         """Copy a local file / unprotected disc into the bibliotheek, filed as info says."""
         def done(folder):
             self._refresh_cache()
             on_done(folder)
 
-        run_async(cache_source.import_local, done, on_error, item, info, on_progress)
+        run_async(cache_source.import_local, done, on_error, item, info, on_progress, cancel)
 
     def cache_usage(self):
         try:

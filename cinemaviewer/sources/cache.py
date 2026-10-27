@@ -257,8 +257,9 @@ def _meta(item):
     }
 
 
-def download(src, item, on_progress=None):
-    """Stream the media for item (served by src) into the bibliotheek; returns its folder."""
+def download(src, item, on_progress=None, cancel=None):
+    """Stream the media for item (served by src) into the bibliotheek; returns its folder.
+    cancel: a threading.Event; when it is set the download stops and its files are removed."""
     existing = folder_for(item)
     if existing is not None and is_cached(item):
         return existing
@@ -277,6 +278,7 @@ def download(src, item, on_progress=None):
             done = 0
             with (tmp / f"media{suffix}").open("wb") as fh:
                 while True:
+                    _check(cancel)
                     chunk = resp.read(1024 * 1024)
                     if not chunk:
                         break
@@ -317,6 +319,15 @@ class CopyProtected(Exception):
     """A disc with copy protection: playing it works, copying it does not."""
 
 
+class Cancelled(Exception):
+    """The download or copy was cancelled; nothing is left behind."""
+
+
+def _check(cancel):
+    if cancel is not None and cancel.is_set():
+        raise Cancelled("geannuleerd")
+
+
 def guess(item):
     """Film or episode, with title/year or serie/season/episode, guessed from the file or folder name."""
     from .local import clean_title
@@ -344,7 +355,7 @@ def _disc_parts(src, kind):
     return [src / n for n in names if (src / n).is_dir()]
 
 
-def import_local(item, info, on_progress=None):
+def import_local(item, info, on_progress=None, cancel=None):
     """Copy a file, DVD/Blu-ray folder or unprotected disc into the bibliotheek, filed as info says
     (see guess()); returns its folder. Copy protection is never bypassed: a protected disc is refused."""
     existing = folder_for(item)
@@ -383,6 +394,7 @@ def import_local(item, info, on_progress=None):
             (tmp / rel).parent.mkdir(parents=True, exist_ok=True)
             with path.open("rb") as fin, (tmp / rel).open("wb") as fout:
                 while True:
+                    _check(cancel)
                     try:
                         chunk = fin.read(4 * 1024 * 1024)
                     except OSError as e:

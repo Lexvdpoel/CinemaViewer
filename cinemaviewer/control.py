@@ -1,6 +1,7 @@
 """The operator window: libraries, details, now playing and transport controls."""
 
 import sys
+import threading
 from datetime import datetime, timedelta
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
@@ -295,6 +296,8 @@ class DetailsPanel(QWidget):
         self.item = None
         self._downloading = False
         self._busy_item = None  # what is being downloaded/copied
+        self._busy_text = ""    # its progress, shown again when you come back to it
+        self._cancel = threading.Event()
         self._gathering = False
         self._gather_token = 0
         lay = QVBoxLayout(self)
@@ -334,6 +337,11 @@ class DetailsPanel(QWidget):
         self.btn_cache.setIcon(glyph_icon(G_DOWNLOAD, TEXT, 16))
         self.btn_cache.setMinimumHeight(46)
         self.btn_cache.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel = QPushButton("  Annuleren")
+        self.btn_cancel.setIcon(glyph_icon(G_STOP, TEXT, 16))
+        self.btn_cancel.setMinimumHeight(46)
+        self.btn_cancel.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel.hide()
         self.btn_uncache = QPushButton("  Uit bibliotheek verwijderen")
         self.btn_uncache.setIcon(glyph_icon(G_DELETE, TEXT, 16))
         self.btn_uncache.setMinimumHeight(46)
@@ -343,8 +351,8 @@ class DetailsPanel(QWidget):
         self.chk_auto.setFocusPolicy(Qt.NoFocus)
         self.chk_auto.toggled.connect(app.set_auto_intermission)
         body.addWidget(self.chk_auto)
-        for b in (self.btn_play_all, self.btn_resume, self.btn_play, self.btn_queue, self.btn_cache, self.btn_uncache,
-                  self.btn_open):
+        for b in (self.btn_play_all, self.btn_resume, self.btn_play, self.btn_queue, self.btn_cache, self.btn_cancel,
+                  self.btn_uncache, self.btn_open):
             b.setFocusPolicy(Qt.NoFocus)
             body.addWidget(b)
         body.addStretch()
@@ -358,6 +366,7 @@ class DetailsPanel(QWidget):
         self.btn_open.clicked.connect(lambda: self.item and app.control.open_item(self.item))
         self.btn_cache.clicked.connect(self._on_cache)
         self.btn_uncache.clicked.connect(self._on_uncache)
+        self.btn_cancel.clicked.connect(self._on_cancel)
         self.cache_progress.connect(self._on_cache_progress)
 
     def set_item(self, item):
@@ -384,6 +393,7 @@ class DetailsPanel(QWidget):
         self.chk_auto.setVisible(item.playable and item.kind not in ("track", "audiocd", "radio"))  # films only
         show_cache = self._can_cache(item)
         self.btn_cache.setVisible(show_cache)
+        self.btn_cancel.hide()
         if show_cache:
             self._set_cache_state()
         else:
@@ -411,10 +421,18 @@ class DetailsPanel(QWidget):
             self.btn_cache.setText("  In bibliotheek")
             self.btn_cache.setIcon(glyph_icon(G_CHECK, TEXT, 16))
             self.btn_cache.setEnabled(False)
-        elif not busy:
+        elif busy:
+            self.btn_cache.setText(self._busy_text)
+            self.btn_cache.setIcon(glyph_icon(G_DOWNLOAD, TEXT, 16))
+            self.btn_cache.setEnabled(False)
+        else:
             self.btn_cache.setText(f"  Naar bibliotheek {self._verb(self.item)}")
             self.btn_cache.setIcon(glyph_icon(G_DOWNLOAD, TEXT, 16))
             self.btn_cache.setEnabled(not self._downloading)
+            if self._downloading:
+                self.btn_cache.setToolTip("Er loopt al een download of kopie; wacht tot die klaar is of annuleer hem.")
+        self.btn_cancel.setVisible(busy)
+        self.btn_cancel.setEnabled(busy and not self._cancel.is_set())
         self.btn_uncache.setVisible(cached)
 
     def _on_uncache(self):
@@ -436,32 +454,51 @@ class DetailsPanel(QWidget):
             if dlg.exec() != QDialog.Accepted:
                 return
             start = lambda: self.app.cache_import(item, dlg.result_info(), progress,  # noqa: E731
-                                                  self._cache_done, self._cache_failed)
+                                                  self._cache_done, self._cache_failed, self._cancel)
         else:
             start = lambda: self.app.cache_download(item, progress, self._cache_done,  # noqa: E731
-                                                    self._cache_failed)
+                                                    self._cache_failed, self._cancel)
+        self._cancel = threading.Event()
         self._downloading, self._busy_item = True, item
-        self.btn_cache.setEnabled(False)
-        self.btn_cache.setText(f"  {self._verb(item).capitalize()}…")
+        self._busy_text = f"  {self._verb(item).capitalize()}…"
+        self._set_cache_state()
         start()
 
+    def _on_cancel(self):
+        if self._downloading:
+            self._cancel.set()  # the worker stops at its next block and removes what it wrote
+            self.btn_cancel.setEnabled(False)
+            self.btn_cancel.setText("  Annuleren…")
+
     def _on_cache_progress(self, done, total):
-        if self._downloading and self._busy_item is self.item:
-            verb = self._verb(self.item).capitalize()
-            self.btn_cache.setText(f"  {verb}… {done * 100 // total}%" if total
-                                   else f"  {verb}… {done // 1048576} MB")
+        if not self._downloading:
+            return
+        verb = self._verb(self._busy_item).capitalize()
+        self._busy_text = (f"  {verb}… {done * 100 // total}% ({fmt_size(done)} van {fmt_size(total)})" if total
+                           else f"  {verb}… {fmt_size(done)}")
+        if self._busy_item is self.item:
+            self.btn_cache.setText(self._busy_text)
+
+    def _cache_finished(self):
+        item, self._downloading, self._busy_item = self._busy_item, False, None
+        self.btn_cancel.setText("  Annuleren")
+        self.btn_cache.setToolTip("")
+        if self.item is not None and self._can_cache(self.item):
+            self._set_cache_state()
+        return item
 
     def _cache_done(self, _folder):
-        item, self._downloading, self._busy_item = self._busy_item, False, None
-        if self.item is not None:
-            self._set_cache_state()
+        item = self._cache_finished()
         self.app.control.toast(f"‘{item.title}’ staat in je bibliotheek.", error=False, ms=4000)
 
     def _cache_failed(self, err):
-        item, self._downloading, self._busy_item = self._busy_item, False, None
-        if self.item is not None:
-            self._set_cache_state()
-        self.app.control.toast(f"{self._verb(item).capitalize()} van ‘{item.title}’ mislukt: {err}", ms=10000)
+        cancelled = self._cancel.is_set()
+        item = self._cache_finished()
+        if cancelled:
+            self.app.control.toast(f"{self._verb(item).capitalize()} van ‘{item.title}’ geannuleerd.", error=False,
+                                   ms=4000)
+        else:
+            self.app.control.toast(f"{self._verb(item).capitalize()} van ‘{item.title}’ mislukt: {err}", ms=10000)
 
     def _on_play_all(self):
         item = self.item
@@ -1204,10 +1241,13 @@ class ControlWindow(QWidget):
 
         def header(text, key):
             h = QListWidgetItem(text.upper())
-            h.setFlags(Qt.ItemIsEnabled)  # clickable: shows the overview of the whole group
-            h.setData(ROLE_KIND, "group")
-            h.setData(ROLE_GROUP, (key, text))
-            h.setToolTip(f"Overzicht van {text}")
+            if key in ("radio", "cast"):  # a single entry each: nothing to give an overview of
+                h.setFlags(Qt.NoItemFlags)
+            else:
+                h.setFlags(Qt.ItemIsEnabled)  # clickable: shows the overview of the whole group
+                h.setData(ROLE_KIND, "group")
+                h.setData(ROLE_GROUP, (key, text))
+                h.setToolTip(f"Overzicht van {text}")
             f = QFont("Segoe UI", 8)
             f.setWeight(QFont.Bold)
             f.setLetterSpacing(QFont.AbsoluteSpacing, 1.5)
@@ -1323,9 +1363,6 @@ class ControlWindow(QWidget):
     # -- navigation -----------------------------------------------------------
     def show_group(self, key, title):
         """Overview of a whole sidebar group: all Jellyfin/Plex libraries, everything in the bibliotheek, ..."""
-        if key == "cast":
-            self.show_cast_panel()
-            return
         self.search.clear()
         self.nav_stack = []
         # The bibliotheek lists its whole content itself; other groups show their sidebar entries.
