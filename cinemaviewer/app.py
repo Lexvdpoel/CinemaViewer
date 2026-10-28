@@ -423,6 +423,7 @@ class CinemaApp(QObject):
                                                              kind="browser", group="Browser")])
         if self.presentation is not None:
             self.control.set_libraries("presentation", [self.presentation.item])
+        self._sync_lamp_entry()
         if cfg["radio"]["enabled"]:
             self.sources["radio"] = RadioSource(cfg["radio"]["stations"])
             self.control.set_libraries("radio", self.sources["radio"].libraries())
@@ -1193,6 +1194,11 @@ class CinemaApp(QObject):
         self._sync_screens()
         self._cast_update("state")
 
+    def _sync_lamp_entry(self):
+        """'Lampen' in the sidebar while DMX is switched on."""
+        self.control.set_libraries("lamps", [MediaItem(source="lamps", id="lamps", title="Lampen", kind="lamps",
+                                                       group="Licht")] if self.cfg["dmx"]["enabled"] else None)
+
     def _music_mode(self, item):
         """True bij afspelen van een nummer met de DMX-muziekstand aan."""
         return (self.dmx.active and self.cfg["dmx"]["music"]["enabled"]
@@ -1353,6 +1359,9 @@ class CinemaApp(QObject):
             self.cast.stop()  # phones should see the new name
             self.cast.start()
         self.dmx.reconfigure(old)
+        self._sync_lamp_entry()
+        if self.control.lamp_panel.isVisible():
+            self.control.lamp_panel.refresh()
         self.player.set_fixed_output(self.devices.controls_volume)
         if self.devices.controls_volume and not old["receiver"]["volume_control"]:
             self.devices.receiver.query_volume()  # slider shows the receiver's current volume
@@ -1415,11 +1424,13 @@ class CinemaApp(QObject):
         elif dlg.result_action == "shutdown":
             if not self._devices_off():  # before Windows starts closing programs
                 return
+            self.dmx.power_off()  # the system may kill us before aboutToQuit runs
             try:
                 shutdown_computer()
             except (OSError, RuntimeError, subprocess.SubprocessError) as e:
                 self.control.toast(f"Windows kon de computer niet uitschakelen: {e}")
                 self.devices.power_on()
+                self.dmx.start()
                 return
             self.shutdown()
 

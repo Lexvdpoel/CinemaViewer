@@ -52,6 +52,7 @@ G_DOWNLOAD = ""
 G_DELETE = ""
 G_WEB = ""
 G_SLIDES = ""
+G_LIGHT = ""
 
 if sys.platform != "win32":
     # The Segoe icon fonts only exist on Windows; elsewhere the same icons come from Google's
@@ -59,11 +60,11 @@ if sys.platform != "win32":
     (G_PLAY, G_PAUSE, G_STOP, G_VOLUME, G_MUTE, G_SETTINGS, G_BACK, G_POWER, G_FOLDER, G_USB, G_DISC,
      G_MOVIE, G_TV, G_SEARCH, G_PREV, G_NEXT, G_REWIND, G_FORWARD, G_CC, G_AUDIO, G_REFRESH, G_SERVER,
      G_CHECK, G_UP, G_SHUFFLE, G_DOWN, G_LEFT, G_RIGHT, G_MENU, G_LIBRARY, G_CAST, G_MUSIC, G_DOWNLOAD,
-     G_DELETE, G_WEB, G_SLIDES) = (
+     G_DELETE, G_WEB, G_SLIDES, G_LIGHT) = (
         "", "", "", "", "", "", "", "", "", "",
         "", "", "", "", "", "", "", "", "", "",
         "", "", "", "", "", "", "", "", "", "",
-        "", "", "", "", "", "")
+        "", "", "", "", "", "", "")
 
 
 def icon_family():

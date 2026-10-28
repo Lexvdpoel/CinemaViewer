@@ -530,6 +530,7 @@ class Receiver(_Worker):
     VOLUME_GAP = 0.2       # at most 5 volume steps per second while the slider is dragged
     HEARTBEAT = 30.0       # idle seconds before asking 'PW?' to check the connection
     ANSWER_WAIT = 1.0      # the protocol promises an answer within 200 ms; allow for a busy receiver
+    POWER_ON_WAIT = 90.0   # keep trying to switch on this long (network still starting after boot)
 
     def __init__(self, host, on_error, on_volume):
         self.host = host
@@ -545,6 +546,7 @@ class Receiver(_Worker):
         self._mv = None
         self._muted = None
         self._power = None        # 'PWON' / 'PWSTANDBY' as last reported by the receiver
+        self._abort = threading.Event()
         super().__init__("Receiver", on_error)
 
     # public, called from the UI thread
@@ -600,9 +602,37 @@ class Receiver(_Worker):
         # A switched-on receiver echoes MV; in standby it may stay silent, so only then check it.
         self._command(f"MV{mv:02d}", "MV" if self._power == "PWON" else None)
 
+    def stop_switching_on(self):
+        """Ends a power-on that is still being retried (switching off or closing comes next)."""
+        self._abort.set()
+
+    def close(self, timeout):
+        self.stop_switching_on()
+        super().close(timeout)
+
     def _power_on(self, source):
-        self._command("PWON")
-        self._power = "PWON"
+        """Switches on and waits until the receiver confirms it. Right after the PC starts the network may
+        not be up yet, and a receiver in standby sometimes misses the first command: keep trying."""
+        deadline = time.monotonic() + self.POWER_ON_WAIT
+        while True:
+            try:
+                self._command("PWON", "PW")
+                end = time.monotonic() + 1.5
+                while self._power != "PWON" and time.monotonic() < end:
+                    self._command("PW?", "PW")
+                    self._read(0.3)
+                if self._power == "PWON":
+                    break
+                error = DeviceError("reageert niet op het aan-commando (PWON)")
+            except (OSError, DeviceError) as e:
+                error = e
+            if self._abort.is_set():
+                return
+            if time.monotonic() + 3.0 > deadline:
+                raise DeviceError(f"gaat niet aan: {error}. Staat ‘Network Control’ (Netwerkbesturing) in "
+                                  "het netwerkmenu van de Denon op ‘Always On’ (Altijd aan)? Anders is de receiver "
+                                  "in stand-by niet via het netwerk te bereiken.")
+            self._abort.wait(3.0)
         time.sleep(2.0)  # protocol: wait at least 1 s after PWON before the next command
         if source:
             self._command(f"SI{source}")
@@ -829,6 +859,8 @@ class Devices(QObject):
                 dev.close(0.5)  # never switched on (only music): nothing to switch off
                 continue
             if dev is not None:
+                if dev is self.receiver:
+                    dev.stop_switching_on()
                 done = threading.Event()
                 dev.submit_confirmed(dev._off, attempts, deadline, done)
                 jobs.append((name, dev, done))

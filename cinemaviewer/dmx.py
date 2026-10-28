@@ -82,7 +82,8 @@ class _Output:
             self._thread.join(2.0)
             if self.failed is None:
                 try:
-                    self.send(self._frame)
+                    for _ in range(5):  # een paar keer, zodat ook een gemist frame geen kwaad kan
+                        self.send(self._frame)
                 except Exception:  # noqa: BLE001 - afsluiten gaat door
                     pass
         self._release()
@@ -206,6 +207,7 @@ class DmxEngine(QObject):
     """Regelt de output: volgt de staat, laat waarden naar het doel toe lopen en speelt muziek mee."""
 
     error = Signal(str)
+    changed = Signal()                 # andere staat, of handmatig aan/uit (lampenpaneel)
 
     def __init__(self, cfg):
         super().__init__()
@@ -215,6 +217,7 @@ class DmxEngine(QObject):
         self.target = [0.0] * FRAME_LEN
         self.step = [0.0] * FRAME_LEN
         self.state = None              # "film", "pauze", "muziek" of None
+        self.manual = None             # [{"color", "level"}] per lamp uit het lampenpaneel; None = automatisch
         self.music_on = False
         self.last_error = None
         self._hue = 0.0
@@ -248,6 +251,8 @@ class DmxEngine(QObject):
         self.current = [0.0] * FRAME_LEN
         self._timer.start()
         self.set_state("pauze")
+        if self.manual is not None:
+            self._set_target(self._lamps_frame(self.manual), 0.5)
 
     def stop_output(self):
         self._timer.stop()
@@ -268,14 +273,45 @@ class DmxEngine(QObject):
             return
         self.music_on = False
         self.state = name
-        self._set_target(self._state_frame(name), self.data["states"].get(name, {}).get("transition", 2.0))
+        if name == "film" and self.manual is not None:
+            self.set_auto()  # een film begint: het licht volgt weer vanzelf
+            return
+        if self.manual is None:
+            self._set_target(self._state_frame(name), self.data["states"].get(name, {}).get("transition", 2.0))
+            self.changed.emit()
+
+    def state_lamps(self, name):
+        """Kleur en niveau per lamp in een staat (aangevuld tot het aantal lampen)."""
+        entries = list(self.data["states"].get(name, {}).get("lamps", []))
+        entries += [{"color": [], "level": 0} for _ in range(len(self.data["lamps"]) - len(entries))]
+        return [dict(e) for e in entries[:len(self.data["lamps"])]]
 
     def _state_frame(self, name):
+        return self._lamps_frame(self.data["states"].get(name, {}).get("lamps", []))
+
+    def _lamps_frame(self, entries):
         frame = [0.0] * FRAME_LEN
-        st = self.data["states"].get(name, {})
-        for lamp, entry in zip(self.data["lamps"], st.get("lamps", [])):
+        for lamp, entry in zip(self.data["lamps"], entries):
             self._paint(frame, lamp, entry.get("color"), entry.get("level", 0))
         return frame
+
+    # -- handmatig (lampenpaneel) -------------------------------------------------
+    def set_manual(self, entries, seconds=0.3):
+        """Lampen met de hand: tot set_auto() of het begin van een film negeert het licht de staten."""
+        was = self.manual is not None
+        self.manual = [dict(e) for e in entries]
+        if self.active:
+            self._set_target(self._lamps_frame(self.manual), seconds)
+        if not was:
+            self.changed.emit()
+
+    def set_auto(self):
+        if self.manual is None:
+            return
+        self.manual = None
+        if self.active and not self.music_on:
+            self.set_state(self.state or "pauze")
+        self.changed.emit()
 
     @staticmethod
     def _paint(frame, lamp, color, level):
@@ -307,7 +343,7 @@ class DmxEngine(QObject):
 
     def set_levels(self, levels, bands):
         """Van de audio-analyse (≈20× per seconde): bereken het doelframe voor de huidige mode."""
-        if not (self.active and self.music_on):
+        if not (self.active and self.music_on) or self.manual is not None:
             return
         sens = max(0.0, min(100.0, float(self.data["music"]["sensitivity"]))) / 100.0 * 2.0
         bass = min(1.0, levels[0] * sens)
@@ -369,6 +405,11 @@ class DmxEngine(QObject):
         while time.monotonic() < deadline and any(self.current):
             self._tick()
             time.sleep(0.02)
+        # wat er ook gebeurd is: alle 512 kanalen op 0 voordat de output dichtgaat
+        self.current = [0.0] * FRAME_LEN
+        self.target = [0.0] * FRAME_LEN
+        if self.out is not None and self.out.failed is None:
+            self.out.update(bytes(FRAME_LEN))
         self.stop_output()
 
     def describe(self):

@@ -178,7 +178,10 @@ elke start aan: *Ook automatisch aanzetten bij het starten van CinemaViewer* (In
   projector en meldt hij één keer als een lamp niet brandt terwijl beide lampen aan horen te staan, als de
   projector een storing meldt, of als een lamp het ingestelde aantal branduren (standaard 2000) bereikt.
 - **Receiver** (bv. Denon AVR-4311) via het Denon-protocol (telnet, poort 23): aan (`PWON`), ingang
-  (`SI…`, bv. BD, DVD, SAT/CBL) en uit naar stand-by. Zet op de receiver *Network Standby* aan.
+  (`SI…`, bv. BD, DVD, SAT/CBL) en uit naar stand-by. Zet op de receiver *Network Standby* aan
+  (*Network Control* → *Always On*); anders is hij in stand-by niet via het netwerk te bereiken en lukt
+  uitzetten wel, maar aanzetten niet. Bij het starten probeert CinemaViewer de receiver tot 90 seconden
+  lang aan te zetten (het netwerk kan net na het opstarten nog niet klaar zijn) en wacht hij op de bevestiging.
   Met **volumeregeling** speelt CinemaViewer zelf op vol niveau en regelen de volumeschuif en dempen de
   receiver; 100% = het ingestelde maximum (standaard −10 dB). Volume wijzigen met de afstandsbediening
   of de knop wordt op de schuif overgenomen. De receiver accepteert maar één netwerkverbinding tegelijk:
@@ -194,6 +197,11 @@ opwarmen is, dan vraagt CinemaViewer *“Toch afsluiten?”*. Kies je *Nee*, dan
 worden de apparaten weer aangezet.
 
 Geef beide apparaten een vast IP-adres (of een DHCP-reservering in de router).
+
+**Lampen (DMX)**: met DMX aan staat links in het menu *Licht → Lampen*. Daar stel je per lamp de sterkte en
+kleur met de hand in, of kies je *Alles uit*, *Alles aan*, *Zoals pauze* of *Zoals film*, bijvoorbeeld tijdens
+een presentatie. Het licht blijft dan zo staan tot je op *Automatisch* klikt of er een film begint. Bij het
+afsluiten van CinemaViewer (ook bij uitschakelen van de computer of afmelden onder Linux) gaan alle lampen uit.
 
 ## Instellingen
 

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 
 from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QColorDialog, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
                                QLineEdit, QListView, QListWidget, QListWidgetItem, QMenu, QPushButton,
                                QScrollArea, QSizePolicy, QSlider, QStackedWidget, QStyle,
                                QStyledItemDelegate, QVBoxLayout, QWidget)
@@ -18,8 +18,8 @@ from .presentation import PresentationPanel
 from .models import SOURCE_LABELS, MediaItem, fmt_runtime, fmt_size, fmt_time
 from .screens import place_window
 from .sources.cache import guess as cache_guess
-from .style import (ACCENT, BORDER, G_AUDIO, G_BACK, G_CC, G_CHECK, G_DELETE, G_DISC, G_DOWN, G_DOWNLOAD, G_FORWARD,
-                    G_LEFT, G_LIBRARY, G_MUTE, G_NEXT, G_PAUSE, G_PLAY, G_POWER, G_PREV, G_REFRESH, G_REWIND,
+from .style import (ACCENT, BORDER, DANGER, G_AUDIO, G_BACK, G_CC, G_CHECK, G_DELETE, G_DISC, G_DOWN, G_DOWNLOAD, G_FORWARD,
+                    G_LEFT, G_LIBRARY, G_LIGHT, G_MUTE, G_NEXT, G_PAUSE, G_PLAY, G_POWER, G_PREV, G_REFRESH, G_REWIND,
                     G_RIGHT,
                     G_SEARCH, G_SERVER, G_SETTINGS, G_SHUFFLE, G_SLIDES, G_STOP, G_TV, G_UP, G_USB, G_VOLUME, G_WEB, MUTED, PANEL2, TEXT,
                     glyph_icon, icon_font, kind_glyph)
@@ -914,6 +914,258 @@ class CastPanel(QWidget):
         self.error.setVisible(bool(st.get("error")))
 
 
+LAMP_WHITE = {"rgb": [255, 255, 255], "rgbw": [0, 0, 0, 255], "cct": [255, 255]}
+
+
+def _lamp_swatch(btn, color, kind):
+    c = (list(color) + [0, 0, 0, 0])[:4]
+    if kind == "cct":
+        rgb = (c[0], 0, c[1])  # as in the settings: red = warm, blue = cold
+    elif kind == "rgbw":
+        rgb = tuple(min(255, v + c[3]) for v in c[:3])
+    else:
+        rgb = tuple(c[:3])
+    btn.setStyleSheet(f"background: rgb{rgb}; border: 1px solid {BORDER}; border-radius: 6px;")
+
+
+def _pick_lamp_color(parent, kind, color):
+    """Colour picker for one lamp; returns the channel values for its type, or None (cancelled)."""
+    c = (list(color) + [0, 0, 0, 0])[:4]
+    if kind == "cct":
+        col = QColorDialog.getColor(QColor(c[0], 0, c[1]), parent, "Kleur: rood = warm, blauw = koud")
+        return [col.red(), col.blue()] if col.isValid() else None
+    if kind == "rgbw":
+        col = QColorDialog.getColor(QColor(*(min(255, v + c[3]) for v in c[:3])), parent, "Kleur")
+        if not col.isValid():
+            return None
+        white = min(col.red(), col.green(), col.blue())
+        return [col.red() - white, col.green() - white, col.blue() - white, white]
+    col = QColorDialog.getColor(QColor(*c[:3]), parent, "Kleur")
+    return [col.red(), col.green(), col.blue()] if col.isValid() else None
+
+
+class LampPanel(QWidget):
+    """Lampen (DMX) in the middle of the operator window: brightness and colour per lamp by hand, e.g.
+    during a presentation. 'Automatisch' or the start of a film hands the light back to the states."""
+
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+        self._rows = []
+        self._lamps = None
+        self._loading = False
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        body = QWidget()
+        lay = QVBoxLayout(body)
+        lay.setContentsMargins(36, 30, 36, 30)
+        lay.setSpacing(18)
+        outer.addWidget(scroll_wrap(body))
+
+        head = QHBoxLayout()
+        head.addWidget(label("Lampen", "H1"))
+        head.addSpacing(12)
+        self.chip = label("", "ChipIdle")
+        head.addWidget(self.chip, 0, Qt.AlignVCenter)
+        head.addStretch()
+        self.btn_auto = QPushButton("  Automatisch")
+        self.btn_auto.setObjectName("Primary")
+        self.btn_auto.setIcon(glyph_icon(G_REFRESH, "#16130B", 14))
+        self.btn_auto.setMinimumHeight(38)
+        self.btn_auto.setFocusPolicy(Qt.NoFocus)
+        self.btn_auto.setCursor(Qt.PointingHandCursor)
+        self.btn_auto.setToolTip("Het licht weer vanzelf laten volgen: film, pauze en muziek (Instellingen → DMX)")
+        self.btn_auto.clicked.connect(app.dmx.set_auto)
+        head.addWidget(self.btn_auto)
+        lay.addLayout(head)
+        self.intro = label("", "Body", wrap=True)
+        lay.addWidget(self.intro)
+        self.status = label("", "Meta", wrap=True)
+        lay.addWidget(self.status)
+
+        self.presets = QWidget()
+        pl = QHBoxLayout(self.presets)
+        pl.setContentsMargins(0, 0, 0, 0)
+        pl.setSpacing(8)
+        for text, tip, fn in (("Alles uit", "Alle lampen uit", lambda: self._all(0)),
+                              ("Alles aan", "Alle lampen op 100%", lambda: self._all(100)),
+                              ("Zoals pauze", "Kleur en sterkte van de pauze-stand", lambda: self._from_state("pauze")),
+                              ("Zoals film", "Kleur en sterkte van de film-stand", lambda: self._from_state("film"))):
+            b = QPushButton(text)
+            b.setMinimumHeight(38)
+            b.setMinimumWidth(110)
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setToolTip(tip)
+            b.clicked.connect(fn)
+            pl.addWidget(b)
+        pl.addStretch()
+        lay.addWidget(self.presets)
+
+        self.card = QFrame()
+        self.card.setObjectName("Card")
+        self.card.setStyleSheet(f"QFrame#Card {{ background: {PANEL2}; border: 1px solid {BORDER}; "
+                                "border-radius: 12px; }")
+        self.grid = QGridLayout(self.card)
+        self.grid.setContentsMargins(22, 18, 22, 20)
+        self.grid.setHorizontalSpacing(14)
+        self.grid.setVerticalSpacing(16)
+        self.grid.setColumnStretch(2, 1)
+        lay.addWidget(self.card)
+        lay.addStretch()
+        app.dmx.changed.connect(lambda: self.isVisible() and self.refresh())
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self.refresh()
+
+    def refresh(self):
+        """Builds the rows again when the lamps changed; shows the current light while it is automatic."""
+        dmx = self.app.dmx
+        data = dmx.data
+        manual = dmx.manual is not None
+        self.chip.setText("HANDMATIG" if manual else "AUTOMATISCH")
+        self.chip.setObjectName("Chip" if manual else "ChipIdle")
+        self.chip.style().unpolish(self.chip)
+        self.chip.style().polish(self.chip)
+        self.btn_auto.setVisible(manual)
+        if not data["enabled"] or not data["lamps"]:
+            self.intro.setText("DMX staat uit. Zet ‘Lampen via DMX aansturen’ aan bij Instellingen → DMX."
+                               if not data["enabled"] else "Er zijn nog geen lampen ingesteld (Instellingen → DMX).")
+            self.status.setText("")
+            self.presets.hide()
+            self.card.hide()
+            return
+        self.presets.show()
+        self.card.show()
+        self.intro.setText(
+            "Met de hand ingesteld: het licht blijft zo tot je op ‘Automatisch’ klikt of er een film begint."
+            if manual else
+            "Het licht volgt nu vanzelf film, pauze en muziek. Schuif een lamp of kies een kleur om het licht "
+            "met de hand in te stellen, bijvoorbeeld tijdens een presentatie.")
+        ok, text = dmx.describe()
+        self.status.setText(text)
+        self.status.setStyleSheet("" if ok else f"color: {DANGER};")
+        lamps = [dict(lamp) for lamp in data["lamps"]]
+        if lamps != self._lamps:
+            self._build(lamps)
+        if manual:
+            self._set_values(dmx.manual)
+        else:
+            self._set_values(dmx.state_lamps(dmx.state if dmx.state in data["states"] else "pauze"))
+
+    def _build(self, lamps):
+        self._lamps = lamps
+        while self.grid.count():
+            w = self.grid.takeAt(0).widget()
+            if w is not None:
+                w.deleteLater()
+        self._rows = []
+        for i, lamp in enumerate(lamps):
+            kind = lamp.get("type", "rgbw")
+            name = label(lamp.get("name") or f"Lamp {i + 1}", "Body")
+            name.setMinimumWidth(120)
+            self.grid.addWidget(name, i, 0)
+            row = {"kind": kind, "color": [], "btn": None, "last": 100}
+            if kind != "dimmer":
+                btn = QPushButton()
+                btn.setFixedSize(44, 30)
+                btn.setFocusPolicy(Qt.NoFocus)
+                btn.setCursor(Qt.PointingHandCursor)
+                btn.setToolTip("Kleur kiezen")
+                btn.clicked.connect(lambda _=False, r=row: self._pick(r))
+                self.grid.addWidget(btn, i, 1)
+                row["btn"] = btn
+            slider = ClickSlider(Qt.Horizontal)
+            slider.setRange(0, 100)
+            slider.setMinimumHeight(32)
+            slider.setFocusPolicy(Qt.NoFocus)
+            slider.valueChanged.connect(lambda _v, r=row: self._changed(r))
+            self.grid.addWidget(slider, i, 2)
+            value = label("", "Body")
+            value.setMinimumWidth(48)
+            value.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            self.grid.addWidget(value, i, 3)
+            toggle = QPushButton()
+            toggle.setFixedSize(70, 34)
+            toggle.setFocusPolicy(Qt.NoFocus)
+            toggle.setCursor(Qt.PointingHandCursor)
+            toggle.clicked.connect(lambda _=False, r=row: self._toggle(r))
+            self.grid.addWidget(toggle, i, 4)
+            row.update(slider=slider, value=value, toggle=toggle)
+            self._rows.append(row)
+
+    def _set_values(self, entries):
+        self._loading = True
+        try:
+            for i, row in enumerate(self._rows):
+                entry = entries[i] if i < len(entries) else {}
+                if row["kind"] != "dimmer":
+                    row["color"] = list(entry.get("color") or []) or list(LAMP_WHITE.get(row["kind"], [255] * 3))
+                    _lamp_swatch(row["btn"], row["color"], row["kind"])
+                row["slider"].setValue(int(max(0, min(100, float(entry.get("level", 0))))))
+                self._show_level(row)
+        finally:
+            self._loading = False
+
+    def _show_level(self, row):
+        v = row["slider"].value()
+        row["value"].setText(f"{v}%")
+        row["toggle"].setText("Aan" if v == 0 else "Uit")
+        row["toggle"].setToolTip("Lamp aan" if v == 0 else "Lamp uit")
+
+    def _changed(self, row):
+        self._show_level(row)
+        if self._loading:
+            return
+        self._light_up(row)
+        self._push()
+
+    def _light_up(self, row):
+        """A lamp turned up with the colour black would stay dark: make it white."""
+        if row["kind"] != "dimmer" and row["slider"].value() and not any(row["color"]):
+            row["color"] = list(LAMP_WHITE.get(row["kind"], [255] * 3))
+            _lamp_swatch(row["btn"], row["color"], row["kind"])
+
+    def _toggle(self, row):
+        level = row["slider"].value()
+        if level:
+            row["last"] = level
+            row["slider"].setValue(0)
+        else:
+            row["slider"].setValue(row["last"] or 100)
+
+    def _pick(self, row):
+        color = _pick_lamp_color(self, row["kind"], row["color"])
+        if color is None:
+            return
+        row["color"] = color
+        _lamp_swatch(row["btn"], color, row["kind"])
+        if row["slider"].value() == 0:
+            row["slider"].setValue(row["last"] or 100)  # sends it as well
+        else:
+            self._push()
+
+    def _all(self, level):
+        self._loading = True
+        try:
+            for row in self._rows:
+                if level == 0 and row["slider"].value():
+                    row["last"] = row["slider"].value()
+                row["slider"].setValue(level)
+                self._light_up(row)
+        finally:
+            self._loading = False
+        self._push()
+
+    def _from_state(self, name):
+        self._set_values(self.app.dmx.state_lamps(name))
+        self._push()
+
+    def _push(self):
+        self.app.dmx.set_manual([{"color": list(r["color"]), "level": r["slider"].value()} for r in self._rows])
+
+
 class ControlWindow(QWidget):
     def __init__(self, app):
         super().__init__(None, Qt.FramelessWindowHint | Qt.Window)
@@ -1074,6 +1326,8 @@ class ControlWindow(QWidget):
         self.center_stack.addWidget(self.browser_panel)
         self.presentation_panel = PresentationPanel(self.app)
         self.center_stack.addWidget(self.presentation_panel)
+        self.lamp_panel = LampPanel(self.app)
+        self.center_stack.addWidget(self.lamp_panel)
         lay.addWidget(self.center_stack)
         self._show_message("Kies links een bibliotheek, map, USB-schijf of disc.")
 
@@ -1258,7 +1512,7 @@ class ControlWindow(QWidget):
 
         def header(text, key):
             h = QListWidgetItem(text.upper())
-            if key in ("radio", "cast", "browser", "presentation"):  # one entry each: nothing to give an overview of
+            if key in ("radio", "cast", "browser", "presentation", "lamps"):  # one entry each: nothing to give an overview of
                 h.setFlags(Qt.NoItemFlags)
             else:
                 h.setFlags(Qt.ItemIsEnabled)  # clickable: shows the overview of the whole group
@@ -1279,7 +1533,7 @@ class ControlWindow(QWidget):
             n.setForeground(QColor(MUTED))
             self.sidebar.addItem(n)
 
-        groups = [("presentation", "Presentatie", G_SLIDES), ("jellyfin", "Jellyfin", G_SERVER), ("plex", "Plex", G_SERVER),
+        groups = [("presentation", "Presentatie", G_SLIDES), ("lamps", "Licht", G_LIGHT), ("jellyfin", "Jellyfin", G_SERVER), ("plex", "Plex", G_SERVER),
                   ("cache", "Bibliotheek", G_LIBRARY), ("folders", "Mappen", None),
                   ("usb", "USB-schijven", G_USB), ("disc", "Disc-stations", G_DISC), ("radio", "Radio", G_AUDIO),
                   ("cast", "Displaycast", G_TV), ("browser", "Browser", G_WEB)]
@@ -1373,6 +1627,9 @@ class ControlWindow(QWidget):
             return
         if item.kind == "browser":
             self.show_browser_panel()
+            return
+        if item.kind == "lamps":
+            self.show_lamp_panel()
             return
         if item.kind == "presentation" and self.app.presentation is not None:
             self.show_presentation_panel()
@@ -1655,6 +1912,9 @@ class ControlWindow(QWidget):
 
     def show_browser_panel(self):
         self._show_panel(self.browser_panel, "Browser")
+
+    def show_lamp_panel(self):
+        self._show_panel(self.lamp_panel, "Lampen")
 
     def show_presentation_panel(self):
         self.presentation_panel.set_presentation(self.app.presentation)

@@ -35,6 +35,20 @@ def _splash(qapp):
     return splash
 
 
+def _quit_on_signals(qapp):
+    """Linux: logging out or 'systemctl poweroff' sends SIGTERM/SIGHUP. Quit normally then, so that
+    aboutToQuit still switches the lamps, projector and receiver off."""
+    if sys.platform == "win32":
+        return
+    import signal
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, lambda *_: qapp.quit())
+    # Python only runs signal handlers between bytecodes: wake it up regularly while Qt waits
+    timer = QTimer(qapp)
+    timer.timeout.connect(lambda: None)
+    timer.start(250)
+
+
 def main():
     parser = argparse.ArgumentParser(prog="cinemaviewer")
     parser.add_argument("--windowed", action="store_true", help="vensters i.p.v. volledig scherm (testen)")
@@ -100,4 +114,5 @@ def main():
         # Runs once the event loop has shown the windows; on a failed start the process ends anyway.
         QTimer.singleShot(0, release_startup_mouse)
         QTimer.singleShot(0, splash.close)
+    _quit_on_signals(qapp)
     return qapp.exec()
