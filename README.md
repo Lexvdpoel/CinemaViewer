@@ -409,3 +409,7 @@ NVIDIA-kaarten (bv. GT 520 / GT 710) gebruiken de open-source *nouveau*-driver.
 - Alle verbindingen (Jellyfin, Plex, posters en videostreams) melden zich als `CinemaViewer/1.0`, zodat
   Cloudflare of een andere proxy vóór de server ze niet als bot blokkeert (HTTP 403, foutcode 1010).
 - Het scherm/de pc gaat niet in slaapstand zolang CinemaViewer draait.
+
+## Licentie
+
+CinemaViewer is vrije software onder de [GNU General Public License v3.0](LICENSE).
