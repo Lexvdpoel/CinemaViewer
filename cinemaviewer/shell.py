@@ -1,6 +1,6 @@
 """Shell process: Windows starts this at sign-in instead of Explorer (Instellingen → Systeem).
 
-It starts CinemaViewer and watches it. 'Naar Windows' starts the normal desktop; a crash restarts
+It starts CinemaViewer and watches it. 'Naar admin omgeving' starts the normal desktop; a crash restarts
 CinemaViewer, and when it keeps crashing the desktop comes back so the PC never stays black.
 Holding Shift right after signing in skips CinemaViewer and starts the desktop (emergency route).
 Deliberately free of Qt, so it starts fast and keeps running when CinemaViewer itself fails."""
@@ -13,7 +13,7 @@ import time
 
 from .system import AUTOSTART_ARG, LAUNCHER, python_gui_exe, start_desktop
 
-EXIT_TO_WINDOWS = 10   # CinemaViewer's exit code for 'Naar Windows'
+EXIT_TO_WINDOWS = 10   # CinemaViewer's exit code for 'Naar admin omgeving'
 EXIT_RESTART = 11      # CinemaViewer's exit code for 'start me again' (after an update)
 RESTART_ARG = "--restart"  # a CinemaViewer started again by itself (waits for the old one)
 MAX_CRASHES = 3        # this many crashes within CRASH_WINDOW seconds → back to the desktop

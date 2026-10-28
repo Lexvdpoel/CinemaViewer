@@ -9,6 +9,7 @@ from PySide6.QtGui import (QColor, QFont, QImage, QLinearGradient, QPainter, QPa
 from PySide6.QtWidgets import QFrame, QLabel, QStackedLayout, QVBoxLayout, QWidget
 
 from .models import fmt_runtime, fmt_time
+from .presentation import SlideView
 from .style import ACCENT
 
 
@@ -981,6 +982,8 @@ class CinemaScreen(QWidget):
         self.stack.addWidget(self.intermission)
         self.video = None
         self.music = None
+        self.browser_host = None
+        self.slides = None
         self.now_showing = None
         if role == "video":
             self.video = QFrame()
@@ -990,6 +993,12 @@ class CinemaScreen(QWidget):
             self.stack.addWidget(self.video)
             self.music = MusicWidget(app.images)  # music has no picture: cover, texts and spectrum
             self.stack.addWidget(self.music)
+            self.browser_host = QWidget()  # the operator's browser view moves in here while streamed
+            self.browser_host.setCursor(Qt.ArrowCursor)
+            QVBoxLayout(self.browser_host).setContentsMargins(0, 0, 0, 0)
+            self.stack.addWidget(self.browser_host)
+            self.slides = SlideView()
+            self.stack.addWidget(self.slides)
         else:
             self.now_showing = NowShowingWidget(app.images)
             self.stack.addWidget(self.now_showing)
@@ -998,6 +1007,7 @@ class CinemaScreen(QWidget):
         return int(self.video.winId())
 
     def place_on(self, screen, windowed=False):
+        self.placed = (screen, windowed)  # to put it back after stepping aside for a slide show
         place_window(self, screen, windowed)
 
     def show_placeholder(self):
@@ -1010,6 +1020,15 @@ class CinemaScreen(QWidget):
     def show_video(self):
         if self.video is not None:
             self.stack.setCurrentWidget(self.video)
+
+    def show_browser(self):
+        if self.video is not None:
+            self.stack.setCurrentWidget(self.browser_host)
+
+    def show_slides(self, presentation):
+        if self.video is not None:
+            self.slides.set_presentation(presentation)
+            self.stack.setCurrentWidget(self.slides)
 
     def show_music(self, item, next_item=None):
         if self.music is not None:

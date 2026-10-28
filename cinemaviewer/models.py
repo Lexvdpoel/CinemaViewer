@@ -25,7 +25,8 @@ class MediaItem:
 
     @property
     def playable(self):
-        return not self.is_folder and self.kind not in ("library", "empty", "displaycast")
+        return not self.is_folder and self.kind not in ("library", "empty", "displaycast", "browser",
+                                                         "presentation")
 
     @property
     def is_disc(self):

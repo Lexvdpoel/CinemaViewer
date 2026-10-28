@@ -97,7 +97,7 @@ def explorer_running():
 
 
 def start_desktop(timeout=20):
-    """Start the normal Cinnamon desktop inside the current X session (for 'Naar Windows').
+    """Start the normal Cinnamon desktop inside the current X session (for 'Naar admin omgeving').
     In the kiosk session the shell process is the session itself: it becomes the full Cinnamon
     session (settings daemon, panels, desktop icons), so the session does not end with us."""
     if explorer_running():

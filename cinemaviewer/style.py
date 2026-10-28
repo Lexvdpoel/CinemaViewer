@@ -50,6 +50,8 @@ G_CAST = ""
 G_MUSIC = ""
 G_DOWNLOAD = ""
 G_DELETE = ""
+G_WEB = ""
+G_SLIDES = ""
 
 if sys.platform != "win32":
     # The Segoe icon fonts only exist on Windows; elsewhere the same icons come from Google's
@@ -57,11 +59,11 @@ if sys.platform != "win32":
     (G_PLAY, G_PAUSE, G_STOP, G_VOLUME, G_MUTE, G_SETTINGS, G_BACK, G_POWER, G_FOLDER, G_USB, G_DISC,
      G_MOVIE, G_TV, G_SEARCH, G_PREV, G_NEXT, G_REWIND, G_FORWARD, G_CC, G_AUDIO, G_REFRESH, G_SERVER,
      G_CHECK, G_UP, G_SHUFFLE, G_DOWN, G_LEFT, G_RIGHT, G_MENU, G_LIBRARY, G_CAST, G_MUSIC, G_DOWNLOAD,
-     G_DELETE) = (
+     G_DELETE, G_WEB, G_SLIDES) = (
         "", "", "", "", "", "", "", "", "", "",
         "", "", "", "", "", "", "", "", "", "",
         "", "", "", "", "", "", "", "", "", "",
-        "", "", "", "")
+        "", "", "", "", "", "")
 
 
 def icon_family():
@@ -105,7 +107,7 @@ KIND_GLYPHS = {
     "library": G_LIBRARY, "folder": G_FOLDER, "usb": G_USB, "dvd": G_DISC, "bluray": G_DISC,
     "audiocd": G_DISC, "empty": G_DISC, "series": G_TV, "season": G_TV, "episode": G_TV,
     "collection": G_LIBRARY, "track": G_MUSIC, "album": G_MUSIC, "artist": G_MUSIC,
-    "playlist": G_LIBRARY, "playlists": G_LIBRARY,
+    "playlist": G_LIBRARY, "playlists": G_LIBRARY, "browser": G_WEB, "presentation": G_SLIDES,
 }
 
 

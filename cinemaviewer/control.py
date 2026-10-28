@@ -11,15 +11,17 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QFrame, QG
                                QScrollArea, QSizePolicy, QSlider, QStackedWidget, QStyle,
                                QStyledItemDelegate, QVBoxLayout, QWidget)
 
+from .browser import BrowserPanel
 from .cast import ytdl
 from .dialogs import ImportDialog
+from .presentation import PresentationPanel
 from .models import SOURCE_LABELS, MediaItem, fmt_runtime, fmt_size, fmt_time
 from .screens import place_window
 from .sources.cache import guess as cache_guess
 from .style import (ACCENT, BORDER, G_AUDIO, G_BACK, G_CC, G_CHECK, G_DELETE, G_DISC, G_DOWN, G_DOWNLOAD, G_FORWARD,
                     G_LEFT, G_LIBRARY, G_MUTE, G_NEXT, G_PAUSE, G_PLAY, G_POWER, G_PREV, G_REFRESH, G_REWIND,
                     G_RIGHT,
-                    G_SEARCH, G_SERVER, G_SETTINGS, G_SHUFFLE, G_STOP, G_TV, G_UP, G_USB, G_VOLUME, MUTED, PANEL2, TEXT,
+                    G_SEARCH, G_SERVER, G_SETTINGS, G_SHUFFLE, G_SLIDES, G_STOP, G_TV, G_UP, G_USB, G_VOLUME, G_WEB, MUTED, PANEL2, TEXT,
                     glyph_icon, icon_font, kind_glyph)
 from .workers import run_async
 
@@ -333,6 +335,11 @@ class DetailsPanel(QWidget):
         self.btn_queue.setCursor(Qt.PointingHandCursor)
         self.btn_open = QPushButton("Openen")
         self.btn_open.setMinimumHeight(46)
+        self.btn_present = QPushButton("  Presentatie op de beamer")
+        self.btn_present.setObjectName("Primary")
+        self.btn_present.setIcon(glyph_icon(G_SLIDES, "#16130B", 16))
+        self.btn_present.setMinimumHeight(46)
+        self.btn_present.setCursor(Qt.PointingHandCursor)
         self.btn_cache = QPushButton("  Naar bibliotheek downloaden")
         self.btn_cache.setIcon(glyph_icon(G_DOWNLOAD, TEXT, 16))
         self.btn_cache.setMinimumHeight(46)
@@ -351,8 +358,8 @@ class DetailsPanel(QWidget):
         self.chk_auto.setFocusPolicy(Qt.NoFocus)
         self.chk_auto.toggled.connect(app.set_auto_intermission)
         body.addWidget(self.chk_auto)
-        for b in (self.btn_play_all, self.btn_resume, self.btn_play, self.btn_queue, self.btn_cache, self.btn_cancel,
-                  self.btn_uncache, self.btn_open):
+        for b in (self.btn_present, self.btn_play_all, self.btn_resume, self.btn_play, self.btn_queue, self.btn_cache,
+                  self.btn_cancel, self.btn_uncache, self.btn_open):
             b.setFocusPolicy(Qt.NoFocus)
             body.addWidget(b)
         body.addStretch()
@@ -364,6 +371,7 @@ class DetailsPanel(QWidget):
         self.btn_play_all.clicked.connect(self._on_play_all)
         self.btn_queue.clicked.connect(lambda: self.item and app.queue_append(self.item))
         self.btn_open.clicked.connect(lambda: self.item and app.control.open_item(self.item))
+        self.btn_present.clicked.connect(lambda: self.item and app.open_presentation(self.item))
         self.btn_cache.clicked.connect(self._on_cache)
         self.btn_uncache.clicked.connect(self._on_uncache)
         self.btn_cancel.clicked.connect(self._on_cancel)
@@ -390,6 +398,7 @@ class DetailsPanel(QWidget):
         self.btn_play_all.setVisible(item.is_folder)
         self.btn_queue.setVisible(item.playable)
         self.btn_open.setVisible(item.is_folder)
+        self.btn_present.setVisible(item.kind == "presentation")
         self.chk_auto.setVisible(item.playable and item.kind not in ("track", "audiocd", "radio"))  # films only
         show_cache = self._can_cache(item)
         self.btn_cache.setVisible(show_cache)
@@ -1061,6 +1070,10 @@ class ControlWindow(QWidget):
         self.center_stack.addWidget(self.message)
         self.cast_panel = CastPanel(self.app)
         self.center_stack.addWidget(self.cast_panel)
+        self.browser_panel = BrowserPanel(self.app)
+        self.center_stack.addWidget(self.browser_panel)
+        self.presentation_panel = PresentationPanel(self.app)
+        self.center_stack.addWidget(self.presentation_panel)
         lay.addWidget(self.center_stack)
         self._show_message("Kies links een bibliotheek, map, USB-schijf of disc.")
 
@@ -1245,7 +1258,7 @@ class ControlWindow(QWidget):
 
         def header(text, key):
             h = QListWidgetItem(text.upper())
-            if key in ("radio", "cast"):  # a single entry each: nothing to give an overview of
+            if key in ("radio", "cast", "browser", "presentation"):  # one entry each: nothing to give an overview of
                 h.setFlags(Qt.NoItemFlags)
             else:
                 h.setFlags(Qt.ItemIsEnabled)  # clickable: shows the overview of the whole group
@@ -1266,10 +1279,10 @@ class ControlWindow(QWidget):
             n.setForeground(QColor(MUTED))
             self.sidebar.addItem(n)
 
-        groups = [("jellyfin", "Jellyfin", G_SERVER), ("plex", "Plex", G_SERVER),
+        groups = [("presentation", "Presentatie", G_SLIDES), ("jellyfin", "Jellyfin", G_SERVER), ("plex", "Plex", G_SERVER),
                   ("cache", "Bibliotheek", G_LIBRARY), ("folders", "Mappen", None),
                   ("usb", "USB-schijven", G_USB), ("disc", "Disc-stations", G_DISC), ("radio", "Radio", G_AUDIO),
-                  ("cast", "Displaycast", G_TV)]
+                  ("cast", "Displaycast", G_TV), ("browser", "Browser", G_WEB)]
         shown = 0
         for key, title, glyph in groups:
             value = self._libs.get(key)
@@ -1357,6 +1370,12 @@ class ControlWindow(QWidget):
         self.nav_stack = []
         if item.kind == "displaycast":
             self.show_cast_panel()
+            return
+        if item.kind == "browser":
+            self.show_browser_panel()
+            return
+        if item.kind == "presentation" and self.app.presentation is not None:
+            self.show_presentation_panel()
             return
         if item.is_folder:
             self.open_item(item)
@@ -1527,7 +1546,9 @@ class ControlWindow(QWidget):
 
     def _on_grid_double(self, li):
         item = li.data(ROLE_ITEM)
-        if item.playable:
+        if item.kind == "presentation":
+            self.app.open_presentation(item)
+        elif item.playable:
             if self.nav_stack and self.nav_stack[-1].kind in ("playlist", "album"):
                 # In a playlist/album: start here and let the rest of the list follow.
                 items = [i for i in self._shown_items() if i.playable]
@@ -1624,6 +1645,29 @@ class ControlWindow(QWidget):
         if not self.app.cast.running:
             self.app.cast.start()
         self.cast_panel.set_status(self.app.cast.status())
+
+    def _show_panel(self, panel, title):
+        self._load_token += 1  # a library still loading must not replace the panel
+        self._set_crumb([title])
+        self.btn_play_list.hide()
+        self.btn_shuffle.hide()
+        self.center_stack.setCurrentWidget(panel)
+
+    def show_browser_panel(self):
+        self._show_panel(self.browser_panel, "Browser")
+
+    def show_presentation_panel(self):
+        self.presentation_panel.set_presentation(self.app.presentation)
+        self._show_panel(self.presentation_panel, self.app.presentation.item.title)
+
+    def presentation_closed(self):
+        self.presentation_panel.set_presentation(None)
+        if self.center_stack.currentWidget() is self.presentation_panel:
+            if self.nav_stack:
+                self._load_current()
+            else:
+                self._set_crumb([])
+                self._show_message("Kies links een bibliotheek, map, USB-schijf of disc.")
 
     def set_cast_status(self, status):
         self.cast_panel.set_status(status)

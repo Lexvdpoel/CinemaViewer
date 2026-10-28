@@ -18,7 +18,7 @@ Fullscreen bioscoop-applicatie voor Windows en Linux Mint.
 
 Bronnen: **Jellyfin**, **Plex**, **lokale mappen / netwerkshares**, **USB-schijven** (automatisch herkend)
 en **DVD / Blu-ray / audio-cd** in het disc-station (en DVD/Blu-ray-mappen of .iso-bestanden), plus
-**internetradio**.
+**internetradio**, een **browser** die je op de beamer zet en **presentaties** (PowerPoint, Impress, PDF).
 
 ## Vereisten
 
@@ -28,10 +28,11 @@ CinemaViewer nodig heeft in de map `vendor` (bij elke GitHub-release als `Cinema
 | Onderdeel | Bestand |
 | --- | --- |
 | Python 3.14 (embeddable) | `vendor\python-3.14.7-embed-amd64.zip` |
-| PySide6 (Qt), python-vlc, yt-dlp | `vendor\wheels\*.whl` (inclusief Microsoft C++-runtime) |
+| PySide6 (Qt, met WebEngine en Pdf), python-vlc, yt-dlp | `vendor\wheels\*.whl` (inclusief Microsoft C++-runtime) |
 | VLC 3.0.24 (libVLC + plugins, ook DVD/Blu-ray) | `vendor\vlc-3.0.24-win64.zip` |
 
-Er hoeft dus niets geïnstalleerd te worden en er is geen internet nodig.
+Er hoeft dus niets geïnstalleerd te worden en er is geen internet nodig. Alleen voor **presentaties** moet
+[LibreOffice](https://www.libreoffice.org) (gratis) geïnstalleerd zijn; op de Linux-kiosk zit het er al in.
 
 ## Installeren op een andere pc
 
@@ -65,7 +66,7 @@ automatisch starten uit, dan blijft de muis gewoon werken.
 na het aanmelden CinemaViewer in plaats van de Verkenner, dus er is geen startmenu, taakbalk of bureaublad.
 Dit geldt alleen voor deze Windows-gebruiker en vanaf de volgende keer aanmelden. Een klein bewakingsproces
 (`cinemaviewer\shell.py`) start CinemaViewer:
-- *Naar Windows* start daarna het gewone bureaublad (ook pas dan starten andere programma's die met Windows meestarten);
+- *Naar admin omgeving* start daarna het gewone bureaublad (ook pas dan starten andere programma's die met Windows meestarten);
 - crasht CinemaViewer, dan start het opnieuw; na drie crashes binnen twee minuten worden de
   Ctrl+Alt+Del-beperkingen opgeheven en verschijnt het bureaublad;
 - **noodroute:** houd **Shift** ingedrukt direct na het aanmelden, dan start meteen het gewone bureaublad.
@@ -77,7 +78,7 @@ Handmatig uitzetten (bijvoorbeeld vanuit een ander account of na de noodroute):
 
 De aan/uit-knop rechtsboven (of Ctrl+Q) opent een keuzemenu:
 
-- **Naar Windows** – sluit CinemaViewer en toont het bureaublad; vraagt het instellingenwachtwoord.
+- **Naar admin omgeving** – sluit CinemaViewer en toont het bureaublad; vraagt het instellingenwachtwoord.
 - **Computer uitschakelen** – sluit CinemaViewer en zet de pc uit.
 
 Alt+F4 wordt genegeerd. Met de optie *Systeem → Windows-toets, Alt+Tab en het Ctrl+Alt+Del-menu blokkeren*
@@ -86,9 +87,9 @@ Ctrl+Alt+Del kan door geen enkel programma worden geblokkeerd (Windows-beveiligi
 maar met *Systeem → Ctrl+Alt+Del-menu beperken* zijn daarin Taakbeheer (ook Ctrl+Shift+Esc), Vergrendelen,
 Afmelden en Wachtwoord wijzigen uitgeschakeld zolang CinemaViewer draait. Hiervoor is eenmalig
 *Rechten instellen* nodig (UAC-vraag): dat geeft jouw gebruiker het recht die vier beleidsinstellingen zelf
-aan en uit te zetten. Bij ‘Naar Windows’ en bij uitschakelen worden ze weer opgeheven.
+aan en uit te zetten. Bij ‘Naar admin omgeving’ en bij uitschakelen worden ze weer opgeheven.
 Is CinemaViewer gecrasht en werkt Taakbeheer niet meer? Voer uit:
-`runtime\python\python.exe -m cinemaviewer --herstel` (of start CinemaViewer en kies ‘Naar Windows’).
+`runtime\python\python.exe -m cinemaviewer --herstel` (of start CinemaViewer en kies ‘Naar admin omgeving’).
 
 ## Achtergrondafbeeldingen
 
@@ -110,7 +111,7 @@ komt uit de firmware (UEFI/BIOS) van het moederbord. Het is daarom niet vanuit C
 *Windows-taakbalk verbergen, ook tijdens het opstarten* zet de Windows-instelling ‘taakbalk automatisch
 verbergen’ aan, zodat de taakbalk bij het opstarten al weg is, nog vóór CinemaViewer start. Zolang
 CinemaViewer draait, is hij op alle schermen helemaal verborgen (ook niet als de muis de schermrand raakt).
-Bij ‘Naar Windows’ verschijnt hij weer zodra je de muis naar de schermrand beweegt. Zet je de optie uit,
+Bij ‘Naar admin omgeving’ verschijnt hij weer zodra je de muis naar de schermrand beweegt. Zet je de optie uit,
 dan komt je eigen taakbalkinstelling terug.
 
 ## Windows-aanmelding (Instellingen → Systeem)
@@ -197,7 +198,7 @@ Geef beide apparaten een vast IP-adres (of een DHCP-reservering in de router).
 Via het tandwiel rechtsboven (of Ctrl+,). Opgeslagen in `%APPDATA%\CinemaViewer\config.json`.
 
 De instellingen zijn beveiligd met een wachtwoord (standaard `1a2b3c4d5e`). Hetzelfde wachtwoord
-beveiligt ‘Naar Windows’ bij afsluiten. Wijzig het onder *Systeem*; alleen een versleutelde hash wordt opgeslagen. Wachtwoord vergeten? Sluit CinemaViewer,
+beveiligt ‘Naar admin omgeving’ bij afsluiten. Wijzig het onder *Systeem*; alleen een versleutelde hash wordt opgeslagen. Wachtwoord vergeten? Sluit CinemaViewer,
 wis de waarde van `settings_password_hash` in `config.json` (maak er `""` van), dan geldt weer het standaardwachtwoord.
 
 | Tab | Wat |
@@ -247,7 +248,7 @@ lijst elk nummer het afgelopen uur al twee keer gespeeld, dan stopt willekeurig 
 | Backspace | Map terug |
 | Tab | (één scherm) wissel film ↔ bediening |
 | Ctrl+, | Instellingen |
-| Ctrl+Q | Afsluitmenu (naar Windows / computer uit) |
+| Ctrl+Q | Afsluitmenu (naar admin omgeving / computer uit) |
 
 Klik op een poster voor details (met *Hervatten* als je eerder gestopt bent), dubbelklik om direct af te spelen.
 Voor DVD/Blu-ray verschijnt in de bedieningsbalk een disc-knop met menunavigatie en hoofdstukken.
@@ -358,12 +359,45 @@ blijven) en start CinemaViewer opnieuw. Tijdens het afspelen wordt niet bijgewer
 Een nieuwe versie uitbrengen (ontwikkelaar): verhoog `__version__` in `cinemaviewer/__init__.py`, commit, en voer
 `tools\release.ps1` uit; dat maakt de tag, de GitHub-release met de wijzigingen en hangt de vendor-zip eraan.
 
+## Browser
+
+Kies links **Browser**. In het midden van het bedieningsscherm staat een webbrowser met adresbalk (webadres of
+zoekterm), terug/vooruit/vernieuwen en een startpagina (Instellingen → Systeem → Browser). De pagina is opgemaakt
+zoals hij op de beamer verschijnt, alleen verkleind. **Naar beamer** zet de browser schermvullend en in volle
+resolutie op de beamer (video in de pagina speelt daar vloeiend); op het bedieningsscherm zie je dan een live
+voorbeeld waarin je gewoon klikt, scrolt en typt. Dezelfde knop (**Stop beamer**), de stopknop of het starten van een
+film haalt hem weer weg; video's in de pagina worden dan gepauzeerd. Downloaden en het openen van bestanden of andere
+programma's vanuit de browser kan niet; inloggegevens van websites worden bewaard.
+
+## Presentaties
+
+PowerPoint- (`.pptx`, `.ppt`, `.ppsx`, `.pps`, `.potx`, `.pptm`), Impress- (`.odp`) en PDF-bestanden staan tussen de
+films op USB-sticks, cd/dvd's, mappen en netwerkshares. Dubbelklik (of **Presentatie op de beamer**) en de beamer
+toont een echte **LibreOffice-diavoorstelling**, met animaties, overgangen en ingesloten video. Er is geen Microsoft-
+software voor nodig.
+
+Op het bedieningsscherm staat dan de **presentatieweergave**, zoals in PowerPoint: de dia op de beamer groot, de
+volgende dia, de **notities** van de huidige dia (tekst groter/kleiner met A−/A+), de verstreken tijd (pauzeren,
+opnieuw) en de klok, en onderaan alle dia's om naar te springen. Bediening:
+
+| Toets | Actie |
+| --- | --- |
+| PgDn, →, ↓, N, spatie | volgende animatie of dia (ook de knop van een presentatie-afstandsbediening) |
+| PgUp, ←, ↑ | vorige |
+| Home / End | eerste / laatste dia |
+| B of . | beamer zwart (nogmaals: terug) |
+
+Tijdens een presentatie staat links bovenaan *PRESENTATIE*: klik erop om terug te gaan naar de presentatieweergave.
+**Presentatie sluiten** of de stopknop beëindigt hem. De eerste keer openen duurt even (LibreOffice maakt de
+voorvertoning en leest de notities); daarna gaat het direct. Verborgen dia's worden overgeslagen. Een PDF heeft geen
+animaties of notities en wordt dia voor dia getoond; dat gebeurt ook als de diavoorstelling niet kan starten.
+
 ## Linux Mint (kiosk)
 
 Op Linux Mint 22 (Cinnamon) installeer je met `./setup.sh` en start je met `./run.sh`. Voor een bioscoop-pc:
 een eigen LightDM-sessie *CinemaViewer* (Instellingen → Systeem → *CinemaViewer vervangt het bureaublad*) met
 automatisch aanmelden. In die sessie draait alleen CinemaViewer, met een kale Openbox als vensterbeheer (geen
-randen, menu's of sneltoetsen) en zonder schermbeveiliging; USB-schijven worden vanzelf gekoppeld. *Naar Windows*
+randen, menu's of sneltoetsen) en zonder schermbeveiliging; USB-schijven worden vanzelf gekoppeld. *Naar admin omgeving*
 start daarin het gewone Cinnamon-bureaublad (na het wachtwoord). Noodroute: houd Shift ingedrukt bij het aanmelden.
 NVIDIA-kaarten (bv. GT 520 / GT 710) gebruiken de open-source *nouveau*-driver.
 

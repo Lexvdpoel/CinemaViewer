@@ -55,6 +55,12 @@ def main():
         return 0
 
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    # The browser (Qt WebEngine) moves between the operator and projection windows: they must share GL contexts.
+    QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
+    try:
+        import PySide6.QtWebEngineWidgets  # noqa: F401 -- must be loaded before the QApplication exists
+    except ImportError:
+        pass  # no browser on this installation
     qapp = QApplication(sys.argv)
     qapp.setApplicationName("CinemaViewer")
     qapp.setStyle("Fusion")

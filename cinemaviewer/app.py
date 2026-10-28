@@ -12,7 +12,7 @@ from pathlib import Path
 from collections import Counter, deque
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import QObject, Qt, QTimer
+from PySide6.QtCore import QObject, QSize, Qt, QTimer
 from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog
 
@@ -23,12 +23,13 @@ from .control import ControlWindow
 from .cursor_lock import CursorLock
 from .devices import Devices
 from .dmx import DmxEngine
-from .models import fmt_size
+from .models import MediaItem, fmt_size
 from .music import MusicAnalyzer
 from .images import ImageCache
 from .mirror import ScreenMirror
 from .planning import plan_intermission
 from .player import Player
+from .presentation import ConvertError, Presentation, SlideShow, prepare, wait_for_closing
 from .screens import CinemaScreen
 from .settings_dialog import ExitDialog, PasswordDialog, SettingsDialog
 from .shell import EXIT_RESTART, EXIT_TO_WINDOWS, RESTART_ARG
@@ -99,6 +100,9 @@ class CinemaApp(QObject):
         self._scanning = False
         self.closing = False
         self.available_update = None  # newer GitHub release found at start
+        self.browser_streaming = False  # the operator's browser is shown on the projection
+        self.presentation = None     # open Presentation (slides on the projection)
+        self._slide_shortcuts = []   # slide keys (PgUp/PgDn, arrows, B), only active during a presentation
         self.single_screen = False
         self.cinema_windows = []
         self.video_window = None
@@ -206,6 +210,8 @@ class CinemaApp(QObject):
             resume = (self._mrl, self.player.position, self.current.extra.get("vlc_options", ()))
             self.player.stop()
         self._update_mirror(False)
+        if self.browser_streaming:
+            self.control.browser_panel.reclaim(pause_media=False)  # back on the projection after the re-layout
         for w in self.cinema_windows:
             w.release()
             w.deleteLater()
@@ -244,6 +250,23 @@ class CinemaApp(QObject):
             self._refresh_intermission()
             if self.single_screen and self.video_window and not self._control_front:
                 self.video_window.raise_()
+            self._update_mirror(False)
+            return
+        if self.presentation is not None or self.browser_streaming:
+            for w in self.cinema_windows:
+                if w.role != "video":
+                    w.show_placeholder()
+                elif self.presentation is not None:
+                    w.show_slides(self.presentation)  # also underneath LibreOffice's show, should it stop
+                    if self.presentation.live:
+                        w.hide()
+                else:
+                    w.show_browser()
+                    self.control.browser_panel.show_on(w)
+            if self.single_screen and self.video_window:
+                front = self.control if self._control_front else self.video_window
+                front.raise_()
+                front.activateWindow()
             self._update_mirror(False)
             return
         state = self.player.state
@@ -375,6 +398,11 @@ class CinemaApp(QObject):
             self.control.set_libraries("folders", local.libraries())
         self.sources["cast"] = CastSource()
         self.control.set_libraries("cast", self.sources["cast"].libraries())
+        if cfg["browser"]["enabled"]:
+            self.control.set_libraries("browser", [MediaItem(source="browser", id="browser", title="Browser",
+                                                             kind="browser", group="Browser")])
+        if self.presentation is not None:
+            self.control.set_libraries("presentation", [self.presentation.item])
         if cfg["radio"]["enabled"]:
             self.sources["radio"] = RadioSource(cfg["radio"]["stations"])
             self.control.set_libraries("radio", self.sources["radio"].libraries())
@@ -729,6 +757,9 @@ class CinemaApp(QObject):
         run_async(src.play_url, lambda mrl: self._start(item, mrl, start), failed, item)
 
     def _start(self, item, mrl, start_ms):
+        self.stop_browser_stream()
+        if self.presentation is not None:
+            self.close_presentation(sync=False)
         if self.current is not None:
             self._report("stop", self.current, self._pos)
         self.current = item
@@ -761,12 +792,124 @@ class CinemaApp(QObject):
             run_async(src.markers, lambda m, it=item: self._on_markers(it, m), None, item)
 
     def stop(self):
+        """Stop button: whatever the projection shows ends (film, browser, presentation)."""
         self.clear_queue()
+        self.stop_browser_stream()
+        if self.presentation is not None:
+            self.close_presentation()
         if self.current is not None:
             self._end_intermission(resume=False)
             self.player.stop()
 
+    # -- browser and presentations on the projection ------------------------------
+    def start_browser_stream(self):
+        self.stop()
+        self.browser_streaming = True
+        self._control_front = False  # one screen: the browser comes to the front (Tab switches)
+        self._sync_screens()
+
+    def stop_browser_stream(self, pause_media=True):
+        if not self.browser_streaming:
+            return
+        self.browser_streaming = False
+        self.control.browser_panel.reclaim(pause_media)
+        self._control_front = True
+        self._sync_screens()
+
+    def open_presentation(self, item):
+        self.control.toast(f"‘{item.title}’ wordt geopend; de eerste keer omzetten duurt even…", error=False,
+                           ms=120000)
+
+        def done(result):
+            try:
+                presentation = Presentation(item, *result)
+            except ConvertError as e:
+                failed(e)
+                return
+            self.stop()
+            self.presentation = presentation
+            self._control_front = False
+            self.control.hide_toast()
+            self.control.set_libraries("presentation", [item])
+            self.control.show_presentation_panel()
+            for sc in self._slide_shortcuts:
+                sc.setEnabled(True)
+            self._sync_screens()
+            presentation.changed.connect(self._presentation_changed)
+            path = item.extra.get("path") or item.id
+            if SlideShow.supported(path) and self.video_window is not None:
+                # the real show (animations, video) on the projection; the PDF slides stay underneath
+                show = SlideShow(path, self.video_window.windowHandle().screen().geometry())
+                show.failed.connect(lambda err, p=presentation: self._slide_show_failed(p, err))
+                presentation.attach(show)
+                show.start()
+                QTimer.singleShot(90000, lambda p=presentation, s=show: (
+                    self.presentation is p and p.show is s and not p.live
+                    and self._slide_show_failed(p, "LibreOffice startte de voorstelling niet op tijd")))
+
+        def failed(err):
+            self.control.toast(f"Kan ‘{item.title}’ niet openen: {err}")
+
+        run_async(prepare, done, failed, item.extra.get("path") or item.id)
+
+    def _presentation_changed(self):
+        """LibreOffice's show started or stopped: the projection window steps aside or comes back."""
+        w, pres = self.video_window, self.presentation
+        if w is None or pres is None:
+            return
+        if pres.live and w.isVisible():
+            w.hide()
+            if not self.single_screen:  # keys (and presenter remotes) back to the operator window
+                QTimer.singleShot(1200, lambda: (self.control.raise_(), self.control.activateWindow()))
+        elif not pres.live and not w.isVisible():
+            self._show_projection()
+
+    def _show_projection(self):
+        w = self.video_window
+        if w is not None and not w.isVisible() and getattr(w, "placed", None):
+            w.place_on(*w.placed)
+
+    def _slide_show_failed(self, presentation, err):
+        if presentation is not self.presentation:
+            return
+        presentation.stop_show()
+        self._show_projection()
+        self.control.toast(f"De diavoorstelling met animaties lukt niet ({err}). De dia's worden zonder "
+                           "animaties getoond.", ms=10000)
+
+    def close_presentation(self, sync=True):
+        if self.presentation is None:
+            return
+        self.presentation.changed.disconnect(self._presentation_changed)
+        self.presentation.stop_show()
+        self._show_projection()
+        self.presentation = None
+        for sc in self._slide_shortcuts:
+            sc.setEnabled(False)
+        for w in self.cinema_windows:
+            if w.slides is not None:
+                w.slides.set_presentation(None)
+        self.control.set_libraries("presentation", None)
+        self.control.presentation_closed()
+        self._control_front = True
+        if sync:
+            self._sync_screens()
+
+    def prerender_slide(self, page):
+        w = self.video_window
+        if self.presentation is None or w is None or w.slides is None or page >= self.presentation.count:
+            return
+        ratio = w.slides.devicePixelRatioF()
+        self.presentation.render(page, QSize(int(w.slides.width() * ratio), int(w.slides.height() * ratio)))
+
+    def _slide(self, action):
+        if self.presentation is not None:
+            action(self.presentation)
+
     def toggle_pause(self):
+        if self.presentation is not None:  # presenter remotes and the space bar: next slide
+            self.presentation.next()
+            return
         if self.intermission is not None:
             if self.intermission["mode"] == "pause":
                 self.resume_intermission()
@@ -1296,6 +1439,9 @@ class CinemaApp(QObject):
         self.music_analyzer.stop()
         self._analyzing = None
         self.cast.stop()
+        if self.presentation is not None:
+            self.presentation.stop_show()
+        wait_for_closing()
         self.dmx.power_off()
         self.release_kiosk()
         self.cursor_lock.release()
@@ -1331,3 +1477,26 @@ class CinemaApp(QObject):
                 sc = QShortcut(QKeySequence(key), window)
                 sc.setContext(Qt.WindowShortcut)
                 sc.activated.connect(fn)
+        slide_bindings = [
+            (("PgDown", "Right", "Down", "N"), lambda: self._slide(Presentation.next)),
+            (("PgUp", "Left", "Up"), lambda: self._slide(Presentation.previous)),
+            (("Home",), lambda: self._slide(lambda p: p.go(0))),
+            (("End",), lambda: self._slide(lambda p: p.go(p.count - 1))),
+            (("B", "."), lambda: self._slide(Presentation.toggle_black)),
+        ]
+        alive = set(map(id, self.cinema_windows + [self.control, window]))
+
+        def kept(sc):  # shortcuts of windows replaced at a screen re-layout are dropped
+            try:
+                return id(sc.parent()) in alive
+            except RuntimeError:
+                return False
+
+        self._slide_shortcuts = [sc for sc in self._slide_shortcuts if kept(sc)]
+        for keys, fn in slide_bindings:
+            for key in keys:
+                sc = QShortcut(QKeySequence(key), window)
+                sc.setContext(Qt.WindowShortcut)
+                sc.setEnabled(self.presentation is not None)
+                sc.activated.connect(fn)
+                self._slide_shortcuts.append(sc)

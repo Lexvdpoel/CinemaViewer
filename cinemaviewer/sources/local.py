@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from ..models import MediaItem
+from ..presentation import PRESENTATION_EXT
 
 if os.name == "nt":
     from ctypes import wintypes
@@ -343,6 +344,12 @@ def _audio_item(path: Path):
     )
 
 
+def _presentation_item(path: Path):
+    """PowerPoint, Impress or PDF: opened as a presentation on the projection (see presentation.py)."""
+    return MediaItem(source="local", id=str(path), title=path.stem, kind="presentation",
+                     subtitle="Presentatie · " + path.suffix[1:].upper(), extra={"path": str(path)})
+
+
 def _folder_item(path: Path):
     title, year = clean_title(path.name)
     item = MediaItem(source="local", id=str(path), title=title, year=year, kind="folder", is_folder=True,
@@ -388,7 +395,7 @@ class LocalSource:
             entries = sorted(path.iterdir(), key=lambda p: p.name.lower())
         except OSError as e:
             raise RuntimeError(f"map niet leesbaar: {e.strerror or e}") from e
-        dirs, files, tracks = [], [], []
+        dirs, files, tracks, slides = [], [], [], []
         for p in entries:
             if p.name.startswith((".", "$")) or p.name in ("System Volume Information",):
                 continue
@@ -399,11 +406,13 @@ class LocalSource:
                     files.append(p)
                 elif p.suffix.lower() in AUDIO_EXT:
                     tracks.append(p)
+                elif p.suffix.lower() in PRESENTATION_EXT and not p.name.startswith("~$"):  # not Office lock files
+                    slides.append(p)
             except OSError:
                 continue
         single = len(files) == 1
         return ([_folder_item(d) for d in dirs] + [_file_item(f, single) for f in files]
-                + [_audio_item(t) for t in tracks])
+                + [_audio_item(t) for t in tracks] + [_presentation_item(s) for s in slides])
 
     def play_url(self, item):
         return item.extra["mrl"]

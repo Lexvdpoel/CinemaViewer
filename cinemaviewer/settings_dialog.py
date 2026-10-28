@@ -147,7 +147,7 @@ class ExitDialog(FramelessDialog):
         if now_playing:
             lay.addWidget(_status(f"‘{now_playing}’ wordt nu afgespeeld en wordt dan gestopt."))
         for action, glyph, head, text in (
-            ("windows", G_SETTINGS, "Naar Windows", "Terug naar het bureaublad (wachtwoord vereist)."),
+            ("windows", G_SETTINGS, "Naar admin omgeving", "Terug naar het bureaublad (wachtwoord vereist)."),
             ("shutdown", G_POWER, "Computer uitschakelen", "CinemaViewer sluiten en de computer uitzetten."),
         ):
             b = QPushButton(f"  {head}\n  {text}")
@@ -1082,14 +1082,14 @@ class SettingsDialog(FramelessDialog):
             "CinemaViewer start zodra deze Windows-gebruiker is aangemeld. Wil je dat de pc na het aanzetten "
             "zonder inlogscherm direct de bioscoop toont, zet dan hieronder ook automatisch aanmelden aan. "
             "De taakbalk-optie zet ‘taakbalk automatisch verbergen’ aan (zodat hij bij het opstarten al weg is) "
-            "en verbergt hem op alle schermen zolang CinemaViewer draait; bij ‘Naar Windows’ verschijnt hij "
+            "en verbergt hem op alle schermen zolang CinemaViewer draait; bij ‘Naar admin omgeving’ verschijnt hij "
             "weer als je de muis naar de schermrand beweegt."))
         sl.addWidget(_status(
             "Als bioscoop-pc start Windows na het aanmelden CinemaViewer in plaats van het bureaublad: er is dan "
-            "niets anders te openen. ‘Naar Windows’ start het gewone bureaublad. Loopt CinemaViewer vast, dan "
+            "niets anders te openen. ‘Naar admin omgeving’ start het gewone bureaublad. Loopt CinemaViewer vast, dan "
             "start het opnieuw; na drie keer binnen twee minuten verschijnt het bureaublad. Noodroute: houd Shift "
             "ingedrukt direct na het aanmelden. Andere programma's die normaal met Windows meestarten, starten "
-            "pas na ‘Naar Windows’. Geldt vanaf de volgende keer aanmelden."))
+            "pas na ‘Naar admin omgeving’. Geldt vanaf de volgende keer aanmelden."))
         lay.addWidget(start)
 
         signin = QGroupBox("Windows-aanmelding")
@@ -1121,7 +1121,7 @@ class SettingsDialog(FramelessDialog):
             "Alt+F4 wordt altijd genegeerd. Deze optie blokkeert ook de Windows-toets, Alt+Tab, Alt+Esc, "
             "Ctrl+Esc en Ctrl+Shift+Esc. Ctrl+Alt+Del zelf kan door geen enkel programma worden geblokkeerd; "
             "daarin worden Taakbeheer, Vergrendelen, Afmelden en Wachtwoord wijzigen uitgeschakeld (vereist "
-            "eenmalig ‘Rechten instellen’). Bij ‘Naar Windows’ of uitschakelen wordt alles weer opgeheven."))
+            "eenmalig ‘Rechten instellen’). Bij ‘Naar admin omgeving’ of uitschakelen wordt alles weer opgeheven."))
         rights_row = QHBoxLayout()
         self.btn_rights = QPushButton("Rechten instellen (eenmalig)")
         self.btn_rights.clicked.connect(self._grant_rights)
@@ -1139,7 +1139,7 @@ class SettingsDialog(FramelessDialog):
         form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         default = not self.data["settings_password_hash"]
         form.addRow("", _status(
-            "Dit wachtwoord beveiligt de instellingen en ‘Naar Windows’ bij afsluiten. "
+            "Dit wachtwoord beveiligt de instellingen en ‘Naar admin omgeving’ bij afsluiten. "
             + ("Nu is het standaardwachtwoord actief; wijzig het hieronder."
                if default else "Er is een eigen wachtwoord ingesteld.")))
         self.pw_new = QLineEdit()
@@ -1152,9 +1152,24 @@ class SettingsDialog(FramelessDialog):
         self.pw_status = _status("")
         form.addRow("", self.pw_status)
         lay.addWidget(pw_box)
+        lay.addWidget(self._browser_box())
         lay.addWidget(self._updates_box())
         lay.addStretch()
         return w
+
+    def _browser_box(self):
+        box = QGroupBox("Browser")
+        form = QFormLayout(box)
+        self.chk_browser = QCheckBox("Browser tonen in de lijst links (websites op de beamer)")
+        self.chk_browser.setChecked(self.data["browser"]["enabled"])
+        form.addRow(self.chk_browser)
+        self.ed_browser_home = QLineEdit(self.data["browser"]["home"])
+        self.ed_browser_home.setPlaceholderText("https://www.google.com/")
+        form.addRow("Startpagina", self.ed_browser_home)
+        form.addRow(_status("De browser staat in het midden van het bedieningsscherm, zo opgemaakt als hij op de "
+                            "beamer verschijnt. ‘Naar beamer’ toont hem schermvullend op de beamer; je bedient "
+                            "hem dan via het voorbeeld. Inloggegevens van websites worden bewaard."))
+        return box
 
     def _updates_box(self):
         box = QGroupBox(f"Updates (nu versie {__version__})")
@@ -1734,6 +1749,8 @@ class SettingsDialog(FramelessDialog):
         d["plex"].update(enabled=self.px_enabled.isChecked(), url=self.px_url.text().strip().rstrip("/"),
                          token=self.px_token.text().strip())
         d["updates"] = self._updates_values()
+        d["browser"] = {"enabled": self.chk_browser.isChecked(),
+                        "home": self.ed_browser_home.text().strip() or "https://www.google.com/"}
         d["local_folders"] = [self.folders.item(i).text() for i in range(self.folders.count())]
         if not self._apply_shares():
             self.tabs.setCurrentIndex(4)  # Lokaal, USB & disc

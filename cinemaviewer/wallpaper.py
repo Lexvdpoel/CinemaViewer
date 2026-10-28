@@ -16,6 +16,8 @@ STANDARD_SIZES = [(1920, 1080), (1920, 1200)]
 
 
 def lockscreen_image_path():
+    if os.name != "nt":  # Cinnamon's lock screen reads it as the logged-in user
+        return CONFIG_DIR / "vergrendelscherm.png"
     # ProgramData: readable for the Windows sign-in screen, writable for the user who created it
     return Path(os.environ.get("ProgramData", r"C:\ProgramData")) / "CinemaViewer" / "vergrendelscherm.png"
 
