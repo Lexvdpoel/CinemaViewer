@@ -366,14 +366,21 @@ class SettingsDialog(FramelessDialog):
         screens = QGuiApplication.screens()
         self.cb_control = QComboBox()
         self.cb_video = QComboBox()
+        self.cb_info = QComboBox()
+        self.cb_info.addItem("Alle overige schermen", "")
         for i, s in enumerate(screens):
-            for cb in (self.cb_control, self.cb_video):
+            for cb in (self.cb_control, self.cb_video, self.cb_info):
                 cb.addItem(screen_description(i, s), s.name())
         self.cb_control.setCurrentIndex(self.app.resolve_screen_index(self.data["control_screen"], 0))
         default_video = 1 if len(screens) > 1 else 0
         self.cb_video.setCurrentIndex(self.app.resolve_screen_index(self.data["video_screen"], default_video))
         form.addRow("Bedieningsscherm", self.cb_control)
         form.addRow("Projectiescherm (film)", self.cb_video)
+        info = self.app.info_screen_index()
+        self.cb_info.setCurrentIndex(0 if info is None else info + 1)
+        self.cb_info.setToolTip("Dit scherm toont tijdens het afspelen ‘Nu te zien’ (affiche, titel en een live "
+                                "voorbeeld); de andere extra schermen tonen alleen de placeholder.")
+        form.addRow("Infoscherm (Nu te zien)", self.cb_info)
         identify = QPushButton("Schermen identificeren")
         identify.clicked.connect(self._identify)
         system_settings = QPushButton("Beeldscherminstellingen openen")
@@ -391,7 +398,7 @@ class SettingsDialog(FramelessDialog):
         self.chk_lock_cursor.setChecked(self.data["lock_cursor"])
         form.addRow("", self.chk_lock_cursor)
         form.addRow("", _status(
-            "Het projectiescherm toont de film. Alle overige schermen (behalve het bedieningsscherm) tonen de "
+            "Het projectiescherm toont de film. Het infoscherm (standaard: alle overige schermen) toont de "
             "placeholder en tijdens het afspelen optioneel een ‘Nu te zien’-kaart. Wil je de film op meerdere "
             "projectoren tegelijk? Zet die schermen in Windows op ‘Dupliceren’.\n"
             "Met één scherm: Tab of dubbelklik wisselt tussen film en bediening."))
@@ -420,6 +427,10 @@ class SettingsDialog(FramelessDialog):
 
     def _outputs_tab(self):
         w, form = self._page()
+        try:
+            display.link_graphics_cards()
+        except OSError:
+            pass  # the list below shows what there is
         outputs = display.display_outputs()
         if os.name == "nt":  # Windows cannot drive an output without a monitor; hide the empty ones
             outputs = [o for o in outputs if o["connected"] or o["active"]]
@@ -430,9 +441,9 @@ class SettingsDialog(FramelessDialog):
             "(EDID) niet of te laat doorgeeft. Lukt het bij het starten niet, dan probeert CinemaViewer het "
             "nog een paar keer (tot 40 seconden). Kies daarna onder ‘Schermen’ welk scherm de film toont."))
         self.out_table = QTableWidget(0, 4)
-        self.out_table.setHorizontalHeaderLabels(["Uitgang", "Resolutie", "Hz", "Positie"])
+        self.out_table.setHorizontalHeaderLabels(["Uitgang (videokaart)", "Resolutie", "Hz", "Positie"])
         self.out_table.verticalHeader().setVisible(False)
-        for col, width in enumerate((250, 120, 80, 220)):
+        for col, width in enumerate((300, 120, 80, 220)):
             self.out_table.setColumnWidth(col, width)
         self.out_table.setMinimumHeight(110)
         self.out_table.setMaximumHeight(170)
@@ -454,9 +465,20 @@ class SettingsDialog(FramelessDialog):
         form.addRow("", self.out_status)
         for f in self.data["forced_outputs"]:
             self._add_output_row(f)
-        found = ", ".join(f"{o['name']} ({'actief' if o['active'] else 'verbonden' if o['connected'] else 'niets herkend'})"
-                          for o in outputs)
-        form.addRow("Gevonden", _status(found or "Geen uitgangen gevonden (onder Linux is xrandr/X11 nodig)."))
+        cards = {}
+        for o in outputs:
+            state = "actief" if o["active"] else "verbonden" if o["connected"] else "niets herkend"
+            cards.setdefault(o.get("card", ""), []).append(f"{o['name']} ({state})")
+        capacity = display.card_capacity()
+        lines = []
+        for card, names in cards.items():
+            limit = f" – max. {capacity[card]} schermen tegelijk" if capacity.get(card) else ""
+            lines.append((f"{card}: " if card else "") + ", ".join(names) + limit)
+        if os.name != "nt" and outputs and len(cards) < 2:
+            lines.append("Zie je de ingebouwde videokaart van het moederbord niet? Zet in het BIOS de "
+                         "ingebouwde graphics aan naast de losse kaart (‘iGPU Multi-Monitor’ of ‘IGD Multi-Monitor’) "
+                         "en sluit er een scherm op aan.")
+        form.addRow("Gevonden", _status("\n".join(lines) or "Geen uitgangen gevonden (onder Linux is xrandr/X11 nodig)."))
 
         self.cb_audio = QComboBox()
         self.cb_audio.setMinimumWidth(420)
@@ -492,7 +514,8 @@ class SettingsDialog(FramelessDialog):
         out.setEditable(True)
         for o in self._outputs:
             state = "actief" if o["active"] else "verbonden" if o["connected"] else "niets herkend"
-            out.addItem(f"{o['name']}  ({state})", o["name"])
+            card = f" – {o['card']}" if o.get("card") else ""
+            out.addItem(f"{o['name']}{card}  ({state})", o["name"])
         name = forced.get("output")
         if name:
             i = out.findData(name)
@@ -573,9 +596,11 @@ class SettingsDialog(FramelessDialog):
 
     def _refresh_screen_combos(self):
         screens = QGuiApplication.screens()
-        for cb in (self.cb_control, self.cb_video):
+        for cb in (self.cb_control, self.cb_video, self.cb_info):
             name = cb.currentData()
             cb.clear()
+            if cb is self.cb_info:
+                cb.addItem("Alle overige schermen", "")
             for i, s in enumerate(screens):
                 cb.addItem(screen_description(i, s), s.name())
             cb.setCurrentIndex(max(0, cb.findData(name)))
@@ -1742,6 +1767,7 @@ class SettingsDialog(FramelessDialog):
             message(self, "Automatisch starten", f"Kon automatisch starten niet instellen:\n{e}")
         d["control_screen"] = {"name": self.cb_control.currentData(), "index": self.cb_control.currentIndex()}
         d["video_screen"] = {"name": self.cb_video.currentData(), "index": self.cb_video.currentIndex()}
+        d["info_screen"] = {"name": self.cb_info.currentData(), "index": self.cb_info.currentIndex() - 1}
         d["placeholder_title"] = self.ed_title.text().strip() or "CinemaViewer"
         d["placeholder_subtitle"] = self.ed_subtitle.text().strip()
         d["desktop_wallpaper"] = self.chk_wallpaper.isChecked()

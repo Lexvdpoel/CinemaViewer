@@ -42,7 +42,7 @@ from .system import (LAUNCHER, KeyboardBlocker, apply_kiosk_policies, autostart_
                      taskbars_visible)
 from .workers import run_async
 
-SCREEN_KEYS = ("control_screen", "video_screen")
+SCREEN_KEYS = ("control_screen", "video_screen", "info_screen")
 SOURCE_KEYS = ("jellyfin", "plex", "local_folders", "network_shares", "show_usb_drives", "show_disc_drives",
                "radio")
 AUDIO_KINDS = ("track", "audiocd", "radio")   # no picture: the projection shows the music screen
@@ -200,6 +200,19 @@ class CinemaApp(QObject):
             return matches[0]
         return min(default, len(screens) - 1)
 
+    def info_screen_index(self):
+        """The screen chosen for 'Nu te zien', or None: then every other screen shows it (also when the
+        chosen screen is not connected)."""
+        ref = self.cfg["info_screen"]
+        name, idx = ref.get("name"), ref.get("index", -1)
+        if not name and not (isinstance(idx, int) and idx >= 0):
+            return None
+        screens = QGuiApplication.screens()
+        matches = [i for i, s in enumerate(screens) if name and s.name() == name]
+        if isinstance(idx, int) and 0 <= idx < len(screens) and (idx in matches or not matches):
+            return idx
+        return matches[0] if matches else None
+
     def layout_screens(self):
         screens = QGuiApplication.screens()
         ci = self.resolve_screen_index(self.cfg["control_screen"], 0)
@@ -218,14 +231,17 @@ class CinemaApp(QObject):
         self.cinema_windows = []
         self.video_window = None
         self.single_screen = ci == vi
+        info = self.info_screen_index()
 
         for i, screen in enumerate(screens):
             if i == vi:
                 role = "video"
             elif i == ci:
                 continue
+            elif info is None or i == info:
+                role = "aux"    # 'Nu te zien' during playback
             else:
-                role = "aux"
+                role = "spare"  # placeholder only
             w = CinemaScreen(self, role, topmost=not self.single_screen and not self.windowed)
             self.install_shortcuts(w)
             w.place_on(screen, self.windowed)
@@ -282,7 +298,7 @@ class CinemaApp(QObject):
                     w.show_video()
                 elif not active:
                     w.show_placeholder()
-            elif active and self.cfg["now_showing_on_other_screens"]:
+            elif active and w.role == "aux" and self.cfg["now_showing_on_other_screens"]:
                 w.show_now_showing(self.current)
             else:
                 w.show_placeholder()
@@ -327,6 +343,10 @@ class CinemaApp(QObject):
         screenAdded, which lays the screens out again. With retry (at start), failing outputs (an
         extender that is still linking up) are tried again a few times; only the last failure is shown."""
         errors = []
+        try:
+            display.link_graphics_cards()  # outputs of a second card (e.g. the Intel on board) become usable
+        except OSError as e:
+            errors.append(f"tweede videokaart: {e}")
         for f in self.cfg["forced_outputs"]:
             try:
                 display.force_output(f["output"], int(f["width"]), int(f["height"]), float(f.get("rate") or 0),

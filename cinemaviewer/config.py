@@ -22,6 +22,7 @@ DEFAULTS = {
     # Screens are stored by their system name (e.g. "\\\\.\\DISPLAY1"); index is a fallback.
     "control_screen": {"name": "", "index": 0},
     "video_screen": {"name": "", "index": 1},
+    "info_screen": {"name": "", "index": -1},  # 'Nu te zien'; index -1: alle overige schermen
     "placeholder_title": "CinemaViewer",
     "placeholder_subtitle": "by L. van der Poel",
     "hide_taskbar": False,          # taskbar on auto-hide (also at boot) and fully hidden while running

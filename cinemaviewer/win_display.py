@@ -101,6 +101,7 @@ def display_outputs():
             "name": dd.DeviceName,
             "label": " · ".join(x for x in (mon.DeviceString if has_monitor else "geen scherm",
                                             dd.DeviceString) if x),
+            "card": dd.DeviceString,
             "connected": has_monitor, "primary": bool(dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE),
             "active": active, "width": cur.dmPelsWidth if cur else 0, "height": cur.dmPelsHeight if cur else 0,
             "x": cur.dmPositionX if cur else 0, "y": cur.dmPositionY if cur else 0,
@@ -141,6 +142,14 @@ def force_output(name, width, height, rate=60, position="right"):
         raise OSError(f"{name}: {_ERRORS.get(code, f'code {code}')}")
     _user32.ChangeDisplaySettingsExW(None, None, None, 0, None)  # apply all pending changes at once
     return True
+
+
+def link_graphics_cards():
+    pass  # Windows uses every video card by itself
+
+
+def card_capacity():
+    return {}  # Windows lists only the outputs it can drive
 
 
 def open_display_settings():

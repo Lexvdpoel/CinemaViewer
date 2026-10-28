@@ -10,6 +10,8 @@ Fullscreen bioscoop-applicatie voor Windows en Linux Mint.
   met poster, titel, eindtijd en een klein live-voorbeeld van de film. Het voorbeeld is een verkleinde
   kopie (±12 beelden/s) van wat er op het projectiescherm staat, dus ook DVD-menu’s zijn zichtbaar.
   Met het voorbeeld aan staat de kaart in drie kolommen: poster · titel en info · voorbeeld met voortgangsbalk.
+  Met *Infoscherm (Nu te zien)* (Instellingen → Schermen) kies je één scherm voor de kaart; de andere extra
+  schermen tonen dan alleen de placeholder.
 - Bij meer dan één scherm blijven de publieksschermen altijd bovenop, zodat meldingen of andere
   programma’s nooit op de projector (of in het voorbeeld) verschijnen.
 - De muisaanwijzer blijft op het bedieningsscherm (op de publieksschermen is hij onzichtbaar en raak je
@@ -203,7 +205,7 @@ wis de waarde van `settings_password_hash` in `config.json` (maak er `""` van), 
 
 | Tab | Wat |
 | --- | --- |
-| Schermen | Bedienings- en projectiescherm kiezen (“Schermen identificeren” toont een nummer op elk scherm, “Beeldscherminstellingen openen” opent die van Windows/Linux), placeholdertekst, “Nu te zien”, voortgang terugmelden |
+| Schermen | Bedienings-, projectie- en infoscherm kiezen (“Schermen identificeren” toont een nummer op elk scherm, “Beeldscherminstellingen openen” opent die van Windows/Linux), placeholdertekst, “Nu te zien”, voortgang terugmelden |
 | Uitgangen | Uitgangen forceren met vaste resolutie/verversing (bv. HDBaseT zonder EDID) en de geluidsuitgang van films kiezen (onder Linux ook “HDMI forceren”) |
 | Jellyfin | Server-adres + gebruikersnaam/wachtwoord → *Verbinden*. Alleen het token wordt opgeslagen, niet het wachtwoord |
 | Plex | Server-adres + X-Plex-Token → *Verbinding testen* |
@@ -224,6 +226,15 @@ Windows kan een uitgang waarop het helemaal geen scherm ziet niet aanzetten; daa
 bij een verkeerde of te late resolutie. Bij **Geluidsuitgang** kies je waar het filmgeluid heen gaat; onder
 Linux zet *HDMI forceren* het HDMI-profiel van de geluidskaart aan, ook als PipeWire/PulseAudio de uitgang
 als ‘niet beschikbaar’ toont.
+
+**Meer schermen dan de videokaart aankan** (Linux): het tabblad *Uitgangen* toont per uitgang de videokaart en
+hoeveel schermen elke kaart tegelijk aanstuurt. Een GT 520 heeft drie aansluitingen (VGA, DVI, HDMI) maar
+stuurt er maar **twee** tegelijk aan. Gebruik voor een derde scherm de ingebouwde videokaart van het
+moederbord (Intel): zet in het BIOS de ingebouwde graphics aan naast de losse kaart (*iGPU Multi-Monitor* of
+*IGD Multi-Monitor*) en sluit het scherm daarop aan. CinemaViewer koppelt die kaart bij het starten aan de
+eerste (`xrandr --setprovideroutputsource`); voeg de uitgang daarna toe onder *Uitgangen* (bv. *rechts naast
+de andere schermen*) en kies hem onder *Schermen*. In de kiosk opent *Beeldscherminstellingen openen* niets:
+de scherminstellingen van Cinnamon werken alleen in de admin omgeving.
 
 In muziek (afspeellijst, artiest, album) speelt **Alles afspelen** (bovenbalk) alle titels achter elkaar af via de
 wachtrij; met een zoekterm alleen de gevonden titels. Dubbelklik in een afspeellijst of album speelt vanaf

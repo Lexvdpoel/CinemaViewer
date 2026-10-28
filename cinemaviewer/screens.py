@@ -960,7 +960,8 @@ class IntermissionWidget(QWidget):
 
 
 class CinemaScreen(QWidget):
-    """Full-screen window on an audience screen. role: 'video' (projection) or 'aux'."""
+    """Full-screen window on an audience screen. role: 'video' (projection), 'aux' ('Nu te zien' during
+    playback) or 'spare' (placeholder only)."""
 
     def __init__(self, app, role, topmost=False):
         flags = Qt.FramelessWindowHint | Qt.Window
