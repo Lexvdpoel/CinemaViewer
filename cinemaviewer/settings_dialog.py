@@ -1538,6 +1538,9 @@ class SettingsDialog(FramelessDialog):
             self.dmx_states[name] = {"transition": spin, "vbox": vbox, "container": container,
                                      "rows": [], "seed": list(st.get("lamps", []))}
             form.addRow("", box)
+        self.dmx_status = _status("")
+        self.dmx_status.hide()
+        form.addRow("", self.dmx_status)
 
         m = d["music"]
         self.dmx_music_enabled = QCheckBox("Lampen laten meebewegen met afgespeelde nummers")
@@ -1686,6 +1689,10 @@ class SettingsDialog(FramelessDialog):
         self.app.cfg.data["dmx"] = copy.deepcopy(self.data["dmx"])
         self.app.dmx.start()
         self.app.dmx.set_state(name)
+        ok, text = self.app.dmx.describe()
+        self.dmx_status.setText(text)
+        self.dmx_status.setStyleSheet(f"color: {'#7BC67E' if ok else '#E07A75'};")
+        self.dmx_status.show()
 
     def reject(self):
         if self.app.cfg.data["dmx"] != self._dmx_original:

@@ -7,6 +7,7 @@ kanalen; elke lamp heeft een startadres (1–512) en een type dat het aantal kan
 
 import math
 import socket
+import threading
 import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -35,10 +36,69 @@ def lamp_channels(lamp, color, level):
     return [int(round(max(0, min(255, int(v))) * lv)) for v in c[:want]]
 
 
-class ArtNetOutput:
+class _Output:
+    """Verstuurt het laatste frame vanuit een eigen thread, ook als er niets verandert: een Open DMX
+    adapter heeft geen eigen geheugen en lampen vallen terug als het signaal wegvalt. Een fout
+    (netwerk weg, adapter eruit) komt in self.failed; de engine meldt die."""
+
+    REFRESH = 1.0  # seconden: frame opnieuw sturen ook zonder wijziging
+
+    def __init__(self):
+        self.failed = None
+        self._frame = bytes(FRAME_LEN)
+        self._dirty = True
+        self._wake = threading.Event()
+        self._stop = False
+        self._thread = threading.Thread(target=self._run, name="dmx-output", daemon=True)
+
+    def start(self):
+        self._thread.start()
+
+    def update(self, data):
+        self._frame = bytes(data)
+        self._dirty = True
+        self._wake.set()
+
+    def _run(self):
+        last = 0.0
+        while not self._stop:
+            self._wake.wait(self.REFRESH)
+            self._wake.clear()
+            if not (self._dirty or time.monotonic() - last >= self.REFRESH):
+                continue
+            self._dirty = False
+            try:
+                self.send(self._frame)
+            except Exception as e:  # noqa: BLE001 - doorgegeven aan de engine
+                self.failed = str(e) or e.__class__.__name__
+                return
+            last = time.monotonic()
+
+    def close(self):
+        """Stuurt het laatste frame nog uit (lampen uit bij afsluiten) en sluit dan."""
+        if self._thread.is_alive():
+            self._stop = True
+            self._wake.set()
+            self._thread.join(2.0)
+            if self.failed is None:
+                try:
+                    self.send(self._frame)
+                except Exception:  # noqa: BLE001 - afsluiten gaat door
+                    pass
+        self._release()
+
+    def send(self, data):
+        raise NotImplementedError
+
+    def _release(self):
+        pass
+
+
+class ArtNetOutput(_Output):
     """ArtDmx-pakketten naar een ArtNet-node of broadcast, universe 0–511 (net/sub)."""
 
     def __init__(self, cfg):
+        super().__init__()
         mode, ip = cfg["artnet_mode"], cfg["artnet_ip"].strip()
         if mode != "ip" or not ip:
             ip = "255.255.255.255"
@@ -49,54 +109,79 @@ class ArtNetOutput:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         self.sock.settimeout(2.0)
         self.seq = 0
+        self.start()
 
     def send(self, data):
-        self.seq = (self.seq + 1) & 0xFF
-        pkt = (b"Art-Net\x00" + bytes([0x00, 0x01, 0x00, 0x0E, self.seq, 0x00,
+        self.seq = self.seq % 255 + 1  # 1–255; 0 betekent 'geen volgorde'
+        pkt = (b"Art-Net\x00" + bytes([0x00, 0x50, 0x00, 0x0E, self.seq, 0x00,
                                        self.subuni, self.net, 0x02, 0x00]) + bytes(data))
         self.sock.sendto(pkt, self.dest)
 
-    def close(self):
+    def _release(self):
         try:
             self.sock.close()
         except OSError:
             pass
 
 
-class UsbDmxOutput:
-    """DMX-512 via een USB-DMX adapter (Enttec-achtig, 250000 baud).
+class UsbDmxOutput(_Output):
+    """DMX-512 via een USB-DMX adapter met een FTDI-chip (seriële poort, bv. COM3 of /dev/ttyUSB0).
 
-    'pro' gebruikt het FTDI-handshake-protocol (OpSetMode/OpOutDmx), 'open' stuurt een
-    break-byte gevolgd door de DMX-frame; 'auto' kiest op basis van het antwoord."""
+    'open': Enttec Open DMX en de meeste losse FTDI-kabels. De pc maakt zelf het DMX-signaal:
+    break, startcode 0 en 512 kanalen op 250 kbaud 8N2, continu (±30 keer per seconde).
+    'pro': Enttec DMX USB Pro en compatibele: één pakket per frame (7E 06 lengte … E7), de
+    adapter herhaalt het zelf. 'auto' vraagt het serienummer op: alleen een Pro antwoordt."""
 
     def __init__(self, cfg):
         import serial  # pyserial
+        super().__init__()
         port = cfg["usb_port"].strip()
         if not port:
             raise ValueError("geen seriële poort ingesteld voor USB-DMX")
-        self.ser = serial.Serial(port, 250000, timeout=0.2)
+        self.ser = serial.Serial(port, 250000, bytesize=serial.EIGHTBITS, parity=serial.PARITY_NONE,
+                                 stopbits=serial.STOPBITS_TWO, timeout=0.2, write_timeout=1.0)
         protocol = cfg.get("usb_protocol", "auto")
-        if protocol in ("auto", "pro"):
+        if protocol == "auto":
+            protocol = "pro" if self._is_pro() else "open"
+        self.protocol = protocol
+        if protocol == "open":
+            self.REFRESH = 0  # continu
+        self.start()
+
+    def _is_pro(self):
+        try:
             self.ser.reset_input_buffer()
-            self.ser.write(b"\x7d\x0d\x01")          # OpSetMode → DMX512
-            time.sleep(0.05)
-            reply = self.ser.read(8)
-            self.protocol = "pro" if reply else ("open" if protocol == "auto" else "pro")
-        else:
-            self.protocol = protocol
-        if self.protocol == "pro":
-            self.ser.write(b"\x7d\x0d\x01")
+            self.ser.write(b"\x7e\x0a\x00\x00\xe7")  # label 10: serienummer opvragen
+            self.ser.flush()
+            reply = self.ser.read(9)
+        except Exception:  # noqa: BLE001 - geen antwoord = Open DMX
+            return False
+        return reply[:2] == b"\x7e\x0a"
 
     def send(self, data):
+        body = b"\x00" + bytes(data)  # startcode 0 + kanalen
         if self.protocol == "pro":
-            self.ser.write(b"\x7d\x06\x00\x02\x00" + bytes(data))
-        else:
-            self.ser.write(b"\x00\x7e\x00\x02\x00" + bytes(data))  # break + mark + frame
+            n = len(body)
+            self.ser.write(b"\x7e\x06" + bytes([n & 0xFF, n >> 8]) + body + b"\xe7")
+            return
+        began = time.perf_counter()
+        self.ser.break_condition = True
+        time.sleep(0.0002)  # break ≥ 88 µs
+        self.ser.break_condition = False
+        time.sleep(0.00002)  # mark after break ≥ 8 µs
+        self.ser.write(body)
+        self.ser.flush()
+        # de FTDI-chip buffert nog: wacht tot het frame (513 × 11 bits ≈ 23 ms) echt de deur uit is,
+        # anders breekt de volgende break het af
+        rest = 0.025 - (time.perf_counter() - began)
+        if rest > 0:
+            time.sleep(rest)
+        time.sleep(0.005)
 
-    def close(self):
+    def _release(self):
         try:
             self.ser.close()
-        except OSError:
+        except Exception:  # noqa: BLE001
             pass
 
 
@@ -131,6 +216,7 @@ class DmxEngine(QObject):
         self.step = [0.0] * FRAME_LEN
         self.state = None              # "film", "pauze", "muziek" of None
         self.music_on = False
+        self.last_error = None
         self._hue = 0.0
         self._bands = [0.0] * 12
         self._timer = QTimer(self)
@@ -149,6 +235,7 @@ class DmxEngine(QObject):
     def start(self):
         """Opent de output en gaat naar de pauze-stand (CinemaViewer start nooit lichtjes-uit)."""
         self.stop_output()
+        self.last_error = None
         if not self.data["enabled"]:
             return
         try:
@@ -262,15 +349,15 @@ class DmxEngine(QObject):
             else:
                 self.current[i] = t if c - s <= t else c - s
             changed = True
-        if not changed:
-            return
         if self.out is None:
             return
-        try:
-            self.out.send(bytes(int(round(v)) for v in self.current))
-        except Exception as e:  # noqa: BLE001 - netwerk weg, adapter eruit
+        if self.out.failed is not None:  # netwerk weg, adapter eruit
+            failed = self.out.failed
             self.stop_output()
-            self._warn(f"DMX gestopt: {e}")
+            self._warn(f"DMX gestopt: {failed}")
+            return
+        if changed:
+            self.out.update(int(round(v)) for v in self.current)
 
     def power_off(self, fade=1.2):
         """Lampen uit bij afsluiten: naar 0 laten lopen en dan pas stoppen (max. 3 s)."""
@@ -284,5 +371,19 @@ class DmxEngine(QObject):
             time.sleep(0.02)
         self.stop_output()
 
+    def describe(self):
+        """Eén regel voor de instellingen: loopt het, en waarheen."""
+        if not self.data["enabled"]:
+            return False, "DMX staat uit: vink ‘Lampen via DMX aansturen’ aan."
+        if self.last_error:
+            return False, self.last_error
+        if isinstance(self.out, UsbDmxOutput):
+            kind = "Enttec Pro" if self.out.protocol == "pro" else "Open DMX via FTDI"
+            return True, f"DMX wordt verstuurd via {self.data['usb_port'].strip()} ({kind})."
+        if isinstance(self.out, ArtNetOutput):
+            return True, f"DMX wordt verstuurd via ArtNet naar {self.out.dest[0]}, universe {self.data['universe']}."
+        return False, "DMX loopt niet."
+
     def _warn(self, message):
+        self.last_error = message
         self.error.emit(message)
