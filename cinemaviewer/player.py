@@ -58,8 +58,8 @@ class Player(QObject):
 
     def __init__(self):
         super().__init__()
-        args = ["--no-video-title-show", "--no-osd", "--quiet", f"--avcodec-hw={hardware_decoding()}",
-                "--no-snapshot-preview",
+        self.hw_decoding = hardware_decoding()
+        args = ["--no-video-title-show", "--no-osd", "--quiet", "--no-snapshot-preview",
                 "--no-stats"]
         if _BUNDLED_VLC_CACHE_MISSING:
             # Without plugins.dat libVLC loads all ~360 plugin DLLs at every start, which on a cold PC
@@ -95,6 +95,8 @@ class Player(QObject):
         if start_ms > 0:
             media.add_option(f":start-time={start_ms / 1000:.1f}")
         media.add_option(":network-caching=1500")
+        # per media: libVLC ignores this option when it is given to the instance
+        media.add_option(f":avcodec-hw={self.hw_decoding}")
         media.add_option(f":http-user-agent={USER_AGENT}")
         for option in options:
             media.add_option(option)
