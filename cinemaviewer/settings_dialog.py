@@ -3,6 +3,7 @@
 import copy
 import os
 import subprocess
+import time
 
 from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication
@@ -1211,9 +1212,48 @@ class SettingsDialog(FramelessDialog):
         lay.addWidget(pw_box)
         lay.addWidget(self._browser_box())
         lay.addWidget(self._updates_box())
+        lay.addWidget(self._remote_diag_box())
         lay.addStretch()
         return w
 
+    def _remote_diag_box(self):
+        box = QGroupBox("Diagnose op afstand")
+        bl = QVBoxLayout(box)
+        self.chk_remote_diag = QCheckBox("Diagnose op afstand toestaan (alleen lezen, gaat na 4 uur vanzelf uit)")
+        self.chk_remote_diag.setChecked(self.app.remote_diag is not None)
+        self.chk_remote_diag.toggled.connect(self._remote_diag_toggled)
+        bl.addWidget(self.chk_remote_diag)
+        self.remote_diag_info = _status("")
+        self.remote_diag_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        bl.addWidget(self.remote_diag_info)
+        bl.addWidget(_status(
+            "Voor ondersteuning: geef het adres hieronder (met de code) aan wie meekijkt. Op die pagina staat wat "
+            "deze pc ziet van schermen, videokaarten en geluid, plus de laatste meldingen. Er kan niets mee "
+            "worden gewijzigd of gestart; wachtwoorden en tokens staan er niet in. Werkt alleen binnen het "
+            "netwerk (of via een VPN). Gaat direct aan of uit, ook zonder Opslaan."))
+        self._show_remote_diag()
+        return box
+
+    def _remote_diag_toggled(self, on):
+        if on and self.app.remote_diag is None:
+            try:
+                self.app.remote_diag_start()
+            except OSError as e:
+                self.remote_diag_info.setText(f"Kon de diagnosepoort niet openen: {e}")
+                self.chk_remote_diag.blockSignals(True)
+                self.chk_remote_diag.setChecked(False)
+                self.chk_remote_diag.blockSignals(False)
+                return
+        elif not on:
+            self.app.remote_diag_stop()
+        self._show_remote_diag()
+
+    def _show_remote_diag(self):
+        if self.app.remote_diag is None:
+            self.remote_diag_info.setText("Uit.")
+            return
+        until = time.strftime("%H:%M", time.localtime(self.app.cfg["remote_diag"]["until"]))
+        self.remote_diag_info.setText("Aan tot " + until + ". Adres:\n" + "\n".join(self.app.remote_diag_addresses()))
     def _browser_box(self):
         box = QGroupBox("Browser")
         form = QFormLayout(box)

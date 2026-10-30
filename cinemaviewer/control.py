@@ -2088,6 +2088,7 @@ class ControlWindow(QWidget):
         self.clock.setText(datetime.now().strftime("%H:%M"))
 
     def toast(self, text, error=True, ms=6000):
+        self.toast_log = (getattr(self, "toast_log", []) + [f"{datetime.now():%H:%M:%S} {text}"])[-40:]
         self._toast_lbl.setObjectName("Toast" if error else "ToastInfo")
         self._toast_lbl.style().unpolish(self._toast_lbl)
         self._toast_lbl.style().polish(self._toast_lbl)

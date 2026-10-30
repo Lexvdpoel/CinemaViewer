@@ -16,7 +16,7 @@ from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog
 
-from . import display, shares, updater, wallpaper
+from . import __version__, display, remote_diag, shares, updater, wallpaper
 from .config import Config
 from .dialogs import ask, message
 from .control import ControlWindow
@@ -191,6 +191,14 @@ class CinemaApp(QObject):
         self._hdmi_audio_at_start()
         # HDMI sound can come without a screen change (a receiver that passes its EDID in standby and
         # its sound only once it is on): look every few seconds
+        self.remote_diag = None
+        self._diag_report = ""
+        self._diag_timer = QTimer(self)
+        self._diag_timer.setInterval(3000)
+        self._diag_timer.timeout.connect(self._refresh_diag)
+        rd = self.cfg.data.get("remote_diag") or {}
+        if rd.get("code") and rd.get("until", 0) > time.time():  # still on (e.g. after a restart)
+            self.remote_diag_start(rd["code"], rd["until"])
         self._hdmi_audio_timer = QTimer(self)
         self._hdmi_audio_timer.setInterval(5000)
         self._hdmi_audio_timer.timeout.connect(lambda: self._follow_hdmi_audio(attempt=4))
@@ -269,6 +277,67 @@ class CinemaApp(QObject):
             self.control.toast("Nieuw scherm op " + ", ".join(newly) + ", maar: " + "; ".join(errors), ms=10000)
         else:
             self.control.toast("Scherm gevonden op " + ", ".join(newly) + ".", error=False)
+
+    # -- diagnosis from a distance -------------------------------------------------
+    def remote_diag_start(self, code=None, until=None):
+        """Read-only diagnosis page on port remote_diag.PORT; returns (code, until) or raises OSError."""
+        self.remote_diag_stop(save=False)
+        code = code or remote_diag.new_code()
+        until = until or time.time() + remote_diag.HOURS * 3600
+        self._refresh_diag(check=False)
+        server = remote_diag.DiagServer(code, lambda: self._diag_report)
+        server.start()
+        self.remote_diag = server
+        self.cfg["remote_diag"] = {"until": until, "code": code}
+        self.cfg.save()
+        self._diag_timer.start()
+        return code, until
+
+    def remote_diag_stop(self, save=True):
+        self._diag_timer.stop()
+        if self.remote_diag is not None:
+            self.remote_diag.stop()
+            self.remote_diag = None
+        if save:
+            self.cfg["remote_diag"] = {"until": 0, "code": ""}
+            self.cfg.save()
+
+    def remote_diag_addresses(self):
+        from .cast.server import local_ips
+        code = self.cfg["remote_diag"]["code"]
+        return [f"http://{ip}:{remote_diag.PORT}/{code}" for ip in local_ips()]
+
+    def _refresh_diag(self, check=True):
+        """The app's part of the diagnosis, made in the GUI thread; also ends the port when its time is up."""
+        if check and (self.remote_diag is None or not self.remote_diag.running
+                      or time.time() > self.cfg["remote_diag"].get("until", 0)):
+            self.remote_diag_stop()
+            return
+        cfg = self.cfg.data
+        lines = [f"CinemaViewer {__version__} – {time.strftime('%Y-%m-%d %H:%M:%S')} – {sys.platform}",
+                 "QT-SCHERMEN"]
+        for i, s in enumerate(QGuiApplication.screens()):
+            lines.append(f"  {i}: {s.name()} {s.geometry().getRect()} {s.manufacturer()} {s.model()}")
+        lines.append("VENSTERS")
+        lines.append(f"  bediening: {self.control.geometry().getRect()} één scherm={self.single_screen}")
+        for w in self.cinema_windows:
+            lines.append(f"  {w.role}: {w.geometry().getRect()}")
+        lines.append("INSTELLINGEN")
+        for key in ("control_screen", "video_screen", "info_screen", "forced_outputs", "audio_output",
+                    "audio_follow_hdmi", "now_showing_on_other_screens", "preview_on_other_screens"):
+            lines.append(f"  {key}: {cfg.get(key)}")
+        lines.append(f"  projector: { {k: v for k, v in cfg['projector'].items() if k != 'password'} }")
+        lines.append(f"  receiver: {cfg['receiver']}")
+        lines.append(f"  dmx: { {k: v for k, v in cfg['dmx'].items() if k != 'states'} }")
+        lines.append("AFSPELEN")
+        lines.append(f"  speler: {self.player.state}, geluid via: {getattr(self.player, 'audio_device', '')}")
+        lines.append(f"  nu: {self.current.title if self.current else '-'}")
+        lines.append(f"  schermmeldingen volgen: {getattr(self, 'watching_outputs', False)}")
+        lines.append("GELUID VOLGT HDMI")
+        lines += ["  " + line for line in getattr(self, "hdmi_audio_log", [])[-15:]] or ["  (nog niets)"]
+        lines.append("MELDINGEN")
+        lines += ["  " + line for line in getattr(self.control, "toast_log", [])] or ["  (geen)"]
+        self._diag_report = "\n".join(lines)
 
     def _hdmi_audio_at_start(self):
         """At start: when the chosen sound output is not there but a device on HDMI takes sound, use that."""
