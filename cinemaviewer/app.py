@@ -282,13 +282,19 @@ class CinemaApp(QObject):
     def remote_diag_start(self, code=None, until=None):
         """Read-only diagnosis page on port remote_diag.PORT; returns (code, until) or raises OSError."""
         self.remote_diag_stop(save=False)
+        firewall = self.cfg["remote_diag"].get("firewall", False)
+        if not firewall and remote_diag.firewall_active():
+            # once: the firewall (ufw) lets the local network reach the port; Linux asks the admin password
+            if run_elevated(remote_diag.firewall_script()) != 0:
+                raise OSError("de firewall kon niet worden opengezet (beheerderswachtwoord nodig)")
+            firewall = True
         code = code or remote_diag.new_code()
         until = until or time.time() + remote_diag.HOURS * 3600
         self._refresh_diag(check=False)
         server = remote_diag.DiagServer(code, lambda: self._diag_report)
         server.start()
         self.remote_diag = server
-        self.cfg["remote_diag"] = {"until": until, "code": code}
+        self.cfg["remote_diag"] = {"until": until, "code": code, "firewall": firewall}
         self.cfg.save()
         self._diag_timer.start()
         return code, until
@@ -299,7 +305,8 @@ class CinemaApp(QObject):
             self.remote_diag.stop()
             self.remote_diag = None
         if save:
-            self.cfg["remote_diag"] = {"until": 0, "code": ""}
+            self.cfg["remote_diag"] = {"until": 0, "code": "",
+                                       "firewall": self.cfg["remote_diag"].get("firewall", False)}
             self.cfg.save()
 
     def remote_diag_addresses(self):
@@ -1528,6 +1535,10 @@ class CinemaApp(QObject):
                 QTimer.singleShot(300, self.restart)
             return
         old = self.cfg.data
+        # set by the app itself while the dialog was open (the diagnosis switch acts at once, the sound
+        # output may follow a new HDMI device): the dialog's copy of these is older
+        for key in ("remote_diag",):
+            dlg.data[key] = self.cfg.data.get(key)
         self.cfg.data = dlg.data
         self.cfg.save()
         if dlg.restart_after:

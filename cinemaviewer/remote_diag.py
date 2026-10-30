@@ -37,6 +37,26 @@ _LINUX_COMMANDS = [
 ]
 
 
+PRIVATE_NETS = ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+
+
+def firewall_active():
+    """Linux: is ufw switched on (Linux Mint blocks incoming connections with it)? Readable without root."""
+    if sys.platform == "win32":
+        return False
+    try:  # (the ufw service also reports 'active' when ufw itself is switched off)
+        with open("/etc/ufw/ufw.conf") as f:
+            return any(line.strip().lower() == "enabled=yes" for line in f)
+    except OSError:
+        return False
+
+
+def firewall_script():
+    """Root script that lets the local network (not the internet) reach the diagnosis port."""
+    return "\n".join(f"ufw allow proto tcp from {net} to any port {PORT} comment 'CinemaViewer diagnose'"
+                      for net in PRIVATE_NETS)
+
+
 def new_code():
     return secrets.token_hex(4)
 
