@@ -1,6 +1,7 @@
 """Thin Qt wrapper around libVLC: one player that renders into the projection window."""
 
 import ctypes
+import glob
 import os
 import sys
 import time
@@ -34,6 +35,17 @@ _STATES = {
 }
 
 
+def hardware_decoding():
+    """VLC's hardware decoding, except on older AMD cards that use the 'radeon' driver (e.g. HD 5450): their
+    video decoder (UVD) can lock up the card at the start of a film; the card is then reset (all screens
+    flicker) and the film plays with sound but without picture. The CPU decodes full HD easily."""
+    if sys.platform != "win32":
+        for path in glob.glob("/sys/class/drm/card*/device/driver"):
+            if os.path.basename(os.path.realpath(path)) == "radeon":
+                return "none"
+    return "any"
+
+
 def _text(value):
     if isinstance(value, bytes):
         return value.decode("utf-8", "replace")
@@ -46,7 +58,8 @@ class Player(QObject):
 
     def __init__(self):
         super().__init__()
-        args = ["--no-video-title-show", "--no-osd", "--quiet", "--avcodec-hw=any", "--no-snapshot-preview",
+        args = ["--no-video-title-show", "--no-osd", "--quiet", f"--avcodec-hw={hardware_decoding()}",
+                "--no-snapshot-preview",
                 "--no-stats"]
         if _BUNDLED_VLC_CACHE_MISSING:
             # Without plugins.dat libVLC loads all ~360 plugin DLLs at every start, which on a cold PC

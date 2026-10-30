@@ -30,7 +30,7 @@ _C_ENV = dict(os.environ, LC_ALL="C")
 
 # Read-only commands whose output helps with screens and (HDMI) sound; output is capped.
 _LINUX_COMMANDS = [
-    ("xrandr --query", ["xrandr", "--query"]),
+    ("xrandr --current", ["xrandr", "--current"]),  # (--query probes every output again: screens may blink)
     ("xrandr --listproviders", ["xrandr", "--listproviders"]),
     ("xrandr --props (EDID en eigenschappen per uitgang)", ["xrandr", "--current", "--props"]),
     ("kernel: HDMI/geluid", ["sh", "-c", "journalctl -k -b --no-pager | grep -iE 'nouveau|hdmi|hda|snd|eld|audio' | tail -n 80"]),

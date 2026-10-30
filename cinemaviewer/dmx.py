@@ -15,6 +15,8 @@ from PySide6.QtCore import QObject, QTimer, Signal
 ARTNET_PORT = 6454
 FRAME_LEN = 512
 TICK_MS = 40
+RECONNECT_TRIES = 5          # schrijffouten binnen 5 minuten voordat DMX echt stopt
+RECONNECT_DELAY_MS = 2000
 
 CHANNELS = {"dimmer": 1, "rgb": 3, "rgbw": 4, "cct": 2}
 LAMP_TYPES = ("dimmer", "rgb", "rgbw", "cct")
@@ -258,15 +260,18 @@ class DmxEngine(QObject):
     def active(self):
         return self._timer.isActive()
 
+    def _open(self):
+        self.out = ArtNetOutput(self.data) if self.data["backend"] == "artnet" else UsbDmxOutput(self.data)
+
     def start(self):
         """Opent de output en gaat naar de pauze-stand (CinemaViewer start nooit lichtjes-uit)."""
         self.stop_output()
         self.last_error = None
+        self._failures = []
         if not self.data["enabled"]:
             return
         try:
-            self.out = ArtNetOutput(self.data) if self.data["backend"] == "artnet" \
-                else UsbDmxOutput(self.data)
+            self._open()
         except Exception as e:  # noqa: BLE001 - slecht adres, poort bezet, pyserial ontbreekt
             self.out = None
             self._warn(f"DMX kan niet starten: {e}")
@@ -432,13 +437,34 @@ class DmxEngine(QObject):
             changed = True
         if self.out is None:
             return
-        if self.out.failed is not None:  # netwerk weg, adapter eruit
+        if self.out.failed is not None:  # netwerk weg, adapter eruit, of het systeem hing even
             failed = self.out.failed
             self.stop_output()
-            self._warn(f"DMX gestopt: {failed}")
+            now = time.monotonic()
+            self._failures = [t for t in getattr(self, "_failures", []) if now - t < 300] + [now]
+            if len(self._failures) > RECONNECT_TRIES:
+                self._warn(f"DMX gestopt: {failed}")
+            else:
+                QTimer.singleShot(RECONNECT_DELAY_MS, lambda: self._reconnect(failed))
             return
         if changed:
             self.out.update(int(round(v)) for v in self.current)
+
+    def _reconnect(self, failed, attempt=1):
+        """Na een schrijffout de output opnieuw openen; de lampen houden hun stand (geen nieuwe start)."""
+        if self.out is not None or not self.data["enabled"]:
+            return
+        try:
+            self._open()
+        except Exception as e:  # noqa: BLE001 - adapter (nog) niet terug
+            self.out = None
+            if attempt < RECONNECT_TRIES:
+                QTimer.singleShot(RECONNECT_DELAY_MS * (attempt + 1), lambda: self._reconnect(failed, attempt + 1))
+            else:
+                self._warn(f"DMX gestopt: {failed} (opnieuw verbinden lukt niet: {e})")
+            return
+        self._timer.start()
+        self.out.update(int(round(v)) for v in self.current)
 
     def power_off(self, fade=1.2):
         """Lampen uit bij afsluiten: naar 0 laten lopen en dan pas stoppen (max. 3 s)."""
