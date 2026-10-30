@@ -46,6 +46,11 @@ def _prepare_screens():
         linux_display.restore_desktop_layout()
     except Exception:  # noqa: BLE001 - never block the start; the screens stay as they are
         pass
+    try:  # before anything plays: PipeWire is restarted when the upmix setting changed
+        from .config import Config
+        linux_display.set_audio_upmix(Config.load()["receiver"].get("all_speakers", True))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _quit_on_signals(qapp):

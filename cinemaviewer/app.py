@@ -1578,6 +1578,8 @@ class CinemaApp(QObject):
         if old["hide_taskbar"] != self.cfg["hide_taskbar"]:
             self.sync_taskbar()
         self.devices.reconfigure(old)
+        if old["receiver"].get("all_speakers", True) != self.cfg["receiver"].get("all_speakers", True):
+            display.set_audio_upmix(self.cfg["receiver"].get("all_speakers", True))
         if old["displaycast"].get("name") != self.cfg["displaycast"].get("name") and self.cast.running:
             self.cast.stop()  # phones should see the new name
             self.cast.start()

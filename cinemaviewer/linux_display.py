@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+from pathlib import Path
 
 POSITIONS = {"right": "Rechts naast de andere schermen", "left": "Links naast de andere schermen",
              "same": "Spiegelen (kopie hoofdscherm)"}
@@ -512,6 +513,44 @@ def _hdmi_profiles():
         elif in_profiles and not line.startswith("\t\t"):
             in_profiles = False
     return out
+
+
+_UPMIX_CONF = """# Written by CinemaViewer (Instellingen → Apparaten → alle luidsprekers): stereo is spread over
+# every channel of a surround output (centre, surround, LFE) instead of only front left/right.
+stream.properties = {
+    channelmix.upmix        = true
+    channelmix.upmix-method = psd
+    channelmix.lfe-cutoff   = 150
+    channelmix.fc-cutoff    = 12000
+    channelmix.rear-delay   = 12.0
+}
+"""
+
+
+def set_audio_upmix(on):
+    """Stereo over all surround channels (PipeWire's own default only fills front left/right). PipeWire reads
+    this when it starts, so it is restarted once when the setting changes. Returns True when it changed."""
+    root = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "pipewire"
+    paths = [root / "pipewire-pulse.conf.d" / "90-cinemaviewer-upmix.conf",
+             root / "client.conf.d" / "90-cinemaviewer-upmix.conf"]
+    changed = False
+    for path in paths:
+        try:
+            if on and (not path.exists() or path.read_text() != _UPMIX_CONF):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(_UPMIX_CONF)
+                changed = True
+            elif not on and path.exists():
+                path.unlink()
+                changed = True
+        except OSError:
+            pass
+    if changed and shutil.which("systemctl"):
+        try:
+            _run(["systemctl", "--user", "restart", "pipewire-pulse.service"], timeout=20)
+        except OSError:
+            pass
+    return changed
 
 
 def route_all_audio(sink):

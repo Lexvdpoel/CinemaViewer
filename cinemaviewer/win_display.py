@@ -160,6 +160,10 @@ def route_all_audio(sink):
     pass
 
 
+def set_audio_upmix(on):
+    return False  # Windows: speaker fill is a setting of the sound card
+
+
 def diagnosis():
     return "Diagnose is er alleen onder Linux."
 
