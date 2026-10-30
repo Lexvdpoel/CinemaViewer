@@ -12,7 +12,7 @@ from pathlib import Path
 from collections import Counter, deque
 from datetime import datetime, timedelta
 
-from PySide6.QtCore import QObject, QSize, Qt, QTimer
+from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog
 
@@ -48,6 +48,7 @@ SOURCE_KEYS = ("jellyfin", "plex", "local_folders", "network_shares", "show_usb_
 AUDIO_KINDS = ("track", "audiocd", "radio")   # no picture: the projection shows the music screen
 SHUFFLE_WINDOW = 3600.0      # random play: a title may come by at most SHUFFLE_MAX times per hour
 SHUFFLE_MAX = 2
+SERVER_RETRY = (5, 10, 15, 30, 60, 120)    # seconds before trying an unreachable Jellyfin/Plex again
 
 
 _inhibit_proc = None
@@ -71,6 +72,8 @@ def keep_display_awake():
 
 
 class CinemaApp(QObject):
+    outputs_poke = Signal()  # from the output-watch thread: X reports a change of the video outputs
+
     def __init__(self, qapp, windowed=False):
         super().__init__()
         self.qapp = qapp
@@ -146,6 +149,12 @@ class CinemaApp(QObject):
         self._screen_timer.setSingleShot(True)
         self._screen_timer.setInterval(1000)
         self._screen_timer.timeout.connect(self.layout_screens)
+        self._outputs_timer = QTimer(self)
+        self._outputs_timer.setSingleShot(True)
+        self._outputs_timer.setInterval(2500)  # a device that comes up reports several changes in a row
+        self._outputs_timer.timeout.connect(self._outputs_changed)
+        self.outputs_poke.connect(self._outputs_timer.start, Qt.QueuedConnection)
+        self._output_states = {}
         qapp.screenAdded.connect(self._watch_screen)
         qapp.screenRemoved.connect(lambda _s: self._screen_timer.start())
         for screen in qapp.screens():
@@ -175,6 +184,8 @@ class CinemaApp(QObject):
         except OSError:
             pass
         self.apply_forced_outputs(retry=True)  # before the screens are laid out
+        self._output_states = display.output_states()
+        display.watch_outputs(self.outputs_poke.emit)  # e.g. an AVR that only passes its EDID once it is on
         self.apply_audio_output()
         self.layout_screens()
         self.reload_sources()
@@ -215,6 +226,37 @@ class CinemaApp(QObject):
             return idx
         return matches[0] if matches else None
 
+    def _outputs_changed(self):
+        """X reported a change of the outputs. An output that is newly connected (a receiver or projector
+        that came up after CinemaViewer started) is switched on: beside the others, or with its forced mode."""
+        states = display.output_states()
+        newly = [name for name, (connected, _active) in states.items()
+                 if connected and not self._output_states.get(name, (False, False))[0]]
+        self._output_states = states
+        if not newly:
+            return
+        try:
+            display.link_graphics_cards()
+        except OSError:
+            pass
+        forced = {f.get("output") for f in self.cfg["forced_outputs"]}
+        for name in newly:
+            if name in forced and states[name][1]:
+                try:
+                    display.refresh_output(name)  # forced before the device was on: give it a fresh signal
+                except OSError:
+                    pass
+        try:
+            display.restore_desktop_layout(force=True)
+        except OSError:
+            pass
+        errors = self.apply_forced_outputs(quiet=True)
+        self._output_states = display.output_states()
+        if errors:
+            self.control.toast("Nieuw scherm op " + ", ".join(newly) + ", maar: " + "; ".join(errors), ms=10000)
+        else:
+            self.control.toast("Scherm gevonden op " + ", ".join(newly) + ".", error=False)
+
     def _watch_screen(self, screen):
         # A screen that only moves or changes size (cloned screens put side by side) comes as
         # geometryChanged, not as added/removed: lay out again then too.
@@ -222,7 +264,10 @@ class CinemaApp(QObject):
         self._screen_timer.start()
 
     def reset_screens(self):
-        """Emergency key (Ctrl+Alt+R): lay the screens out again and bring the menu to the front."""
+        """Emergency key (Ctrl+Alt+R): check the outputs again, lay the screens out again and bring the
+        menu to the front."""
+        self._output_states = {}  # every connected output counts as new
+        self._outputs_changed()
         self.layout_screens()
         self.control.showNormal()
         self.control.place_on(QGuiApplication.screens()[self.resolve_screen_index(self.cfg["control_screen"], 0)],
@@ -405,12 +450,21 @@ class CinemaApp(QObject):
         self.sources = {}
         self.control._libs = {}
 
-        def load(key, src):
-            self.control.set_libraries(key, "Verbinden…")
+        def load(key, src, attempt=0):
+            # Started before the network (DHCP) was up, or the server still booting: keep trying, first
+            # quickly, then every two minutes, until it answers or the sources are loaded anew.
+            def failed(err):
+                if gen != self._source_generation:
+                    return
+                wait = SERVER_RETRY[min(attempt, len(SERVER_RETRY) - 1)]
+                self.control.set_libraries(key, f"Niet bereikbaar: {err}\nOpnieuw proberen over {wait} s…")
+                QTimer.singleShot(wait * 1000, lambda: gen == self._source_generation and load(key, src, attempt + 1))
+
+            if attempt == 0:
+                self.control.set_libraries(key, "Verbinden…")
             run_async(src.libraries,
                       lambda libs: gen == self._source_generation and self.control.set_libraries(key, libs),
-                      lambda err: gen == self._source_generation and self.control.set_libraries(
-                          key, f"Niet bereikbaar: {err}"))
+                      failed)
 
         j = cfg["jellyfin"]
         if j["enabled"] and j["url"]:

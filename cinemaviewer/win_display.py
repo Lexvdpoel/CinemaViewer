@@ -148,8 +148,20 @@ def link_graphics_cards():
     pass  # Windows uses every video card by itself
 
 
-def restore_desktop_layout():
+def restore_desktop_layout(force=False):
     return ""  # Windows keeps its own layout
+
+
+def output_states():
+    return {}
+
+
+def watch_outputs(callback):
+    return False  # Windows lays out new screens itself
+
+
+def refresh_output(name):
+    pass
 
 
 def card_capacity():

@@ -242,14 +242,14 @@ def _cloned(active):
     return len(corners) != len(set(corners))
 
 
-def restore_desktop_layout():
+def restore_desktop_layout(force=False):
     """At the start of the kiosk session: X itself shows all screens as copies of each other (in a
     resolution they all share, often 720x576), and only the desktop restores its layout. So: the layout
     saved in Cinnamon's display settings, or else every connected screen beside the previous one at its
     own best resolution. Returns a short description of what was done, or '' when nothing was needed."""
     _check_x11()
     desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
-    if any(d in desktop for d in ("cinnamon", "gnome")):
+    if not force and any(d in desktop for d in ("cinnamon", "gnome")):
         return ""  # that desktop restores its own layout
     outputs = display_outputs()
     connected = [o for o in outputs if o["connected"]]
@@ -290,6 +290,63 @@ def restore_desktop_layout():
         x += width
     _run(args)
     return "schermen naast elkaar gezet"
+
+
+# -- hotplug ---------------------------------------------------------------------------
+_RR_SCREEN_CHANGE, _RR_CRTC_CHANGE, _RR_OUTPUT_CHANGE = 1, 2, 4
+
+
+def output_states():
+    """{output: (connected, active)} as X knows it now, without probing the outputs again (no flicker,
+    and no new change events of its own)."""
+    try:
+        _check_x11()
+        text = _run(["xrandr", "--current"])
+    except OSError:
+        return {}
+    states = {}
+    for line in text.splitlines():
+        m = _OUTPUT_RE.match(line)
+        if m:
+            states[m.group(1)] = (m.group(2) == "connected", m.group(4) is not None)
+    return states
+
+
+def watch_outputs(callback):
+    """Calls callback() (from a background thread) whenever X reports a change of the outputs: a screen
+    or receiver that is switched on and passes its EDID, a cable that is plugged in. Returns False
+    when that cannot be watched."""
+    import threading
+    try:
+        _check_x11()
+        x11, xrr = _xrandr_lib()
+    except OSError:
+        return False
+    x11.XNextEvent.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+    xrr.XRRSelectInput.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int]
+    dpy = x11.XOpenDisplay(None)  # a connection of its own, only used by the thread below
+    if not dpy:
+        return False
+    xrr.XRRSelectInput(dpy, x11.XDefaultRootWindow(dpy), _RR_SCREEN_CHANGE | _RR_CRTC_CHANGE | _RR_OUTPUT_CHANGE)
+    event = ctypes.create_string_buffer(256)  # XEvent is 24 longs
+
+    def run():
+        while True:
+            x11.XNextEvent(dpy, event)  # blocks until X reports something
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - keep watching
+                pass
+
+    threading.Thread(target=run, name="output-watch", daemon=True).start()
+    return True
+
+
+def refresh_output(name):
+    """Switch an output off and on again (same mode), so that a device that only just came up (an AVR
+    passing on its EDID) gets a fresh signal."""
+    _check_x11()
+    _run(["xrandr", "--output", name, "--off"])
 
 
 def _modeline(width, height, rate):
