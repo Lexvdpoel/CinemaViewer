@@ -97,6 +97,7 @@ class Player(QObject):
         media.add_option(":network-caching=1500")
         # per media: libVLC ignores this option when it is given to the instance
         media.add_option(f":avcodec-hw={self.hw_decoding}")
+        media.add_option(":no-snapshot-preview")  # the preview takes snapshots: never show them on the film
         media.add_option(f":http-user-agent={USER_AGENT}")
         for option in options:
             media.add_option(option)

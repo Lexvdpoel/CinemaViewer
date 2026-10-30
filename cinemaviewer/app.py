@@ -27,7 +27,7 @@ from .models import MediaItem, fmt_size
 from .music import MusicAnalyzer
 from .images import ImageCache
 from .loudness import Loudness, gain_db
-from .mirror import ScreenMirror
+from .mirror import PlayerMirror, ScreenMirror
 from .planning import plan_intermission
 from .player import Player
 from .presentation import ConvertError, Presentation, SlideShow, prepare, wait_for_closing
@@ -541,7 +541,9 @@ class CinemaApp(QObject):
         want = (showing_video and bool(aux) and self.video_window is not None
                 and self.cfg["now_showing_on_other_screens"] and self.cfg["preview_on_other_screens"])
         if want and self.mirror is None:
-            self.mirror = ScreenMirror(self.video_window.winId())
+            # Linux: from the player itself (reading the screen back makes the film stutter on some cards)
+            self.mirror = (ScreenMirror(self.video_window.winId()) if sys.platform == "win32"
+                           else PlayerMirror(self.player))
             self.mirror.frame.connect(self._on_preview_frame)
             self.mirror.start()
         elif not want and self.mirror is not None:
