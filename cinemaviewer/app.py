@@ -344,6 +344,8 @@ class CinemaApp(QObject):
             lines.append(f"  {key}: {cfg.get(key)}")
         lines.append(f"  projector: { {k: v for k, v in cfg['projector'].items() if k != 'password'} }")
         lines.append(f"  receiver: {cfg['receiver']}")
+        receiver = self.devices.receiver
+        lines += ["  surround: " + line for line in (receiver.surround_log if receiver else [])[-8:]]
         lines.append(f"  dmx: { {k: v for k, v in cfg['dmx'].items() if k != 'states'} }")
         lines.append("AFSPELEN")
         lines.append(f"  speler: {self.player.state}, geluid via: {getattr(self.player, 'audio_device', '')}")
@@ -1358,6 +1360,7 @@ class CinemaApp(QObject):
             w.set_music_playing(state == "playing")
         if state == "playing":
             self._queue_failures = 0
+            self.devices.refresh_surround()
             if self._music_mode(self.current):
                 self.dmx.music_start()
             else:

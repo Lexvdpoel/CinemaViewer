@@ -541,10 +541,17 @@ class Receiver(_Worker):
     HEARTBEAT = 30.0       # idle seconds before asking 'PW?' to check the connection
     ANSWER_WAIT = 1.0      # the protocol promises an answer within 200 ms; allow for a busy receiver
     POWER_ON_WAIT = 90.0   # keep trying to switch on this long (network still starting after boot)
+    SURROUND_DELAY = 3.0   # after playback starts: the receiver first locks onto the new signal
 
-    def __init__(self, host, on_error, on_volume):
+    def __init__(self, host, on_error, on_volume, all_speakers=False):
         self.host = host
         self.on_volume = on_volume
+        self.all_speakers = all_speakers  # always use every speaker: stereo upmixed, wides/heights via DSX
+        self.surround_log = []
+        self._ms = None           # surround mode as last reported ('MULTI CH IN 7.1', 'STEREO', ...)
+        self._dsx = None          # Audyssey DSX as last reported ('OFF', 'ONW', ...)
+        self._speakers = {}       # speaker setup: 'FRW' -> 'SMA' / 'LAR' / 'NON', 'FRH' -> ...
+        self._surround_due = 0.0
         self._sock = None
         self._buf = b""
         self._volume = None       # latest requested master volume (coalesced while dragging)
@@ -575,6 +582,11 @@ class Receiver(_Worker):
 
     def query_volume(self):
         self.submit(self._query_volume)
+
+    def refresh_surround(self):
+        """Playback started: once the receiver has the signal, use all speakers again (when enabled)."""
+        if self.all_speakers:
+            self._surround_due = time.monotonic() + self.SURROUND_DELAY
 
     def ask_status(self, timeout=5.0):
         """Status text through the open connection (a second connection would push this one off)."""
@@ -647,6 +659,37 @@ class Receiver(_Worker):
         if source:
             self._command(f"SI{source}")
         self._query_volume()
+        if self.all_speakers:
+            self._surround_due = time.monotonic() + self.SURROUND_DELAY
+
+    def _apply_surround(self):
+        """Every speaker plays: a 2-channel signal gets Dolby Pro Logic II (surround), and Audyssey DSX adds the
+        front wide and/or height speakers (7.1 becomes 9.1, with two subwoofers 9.2). The PC already sends
+        7.1 with stereo spread over it (PipeWire upmix), so normally only DSX needs switching on."""
+        if not self._speakers:
+            self._command("SSSPC ?", "SS")
+            self._read(0.5)  # the setup comes as several lines
+        self._command("MS?", "MS")
+        if (self._ms or "") in ("STEREO", "DIRECT", "PURE DIRECT"):
+            self._command("MSDOLBY DIGITAL", "MS")  # 2-channel signal: the Dolby family is PLII(x) here
+            time.sleep(0.5)
+            self._command("MS?", "MS")
+        wide = self._speakers.get("FRW", "NON") != "NON"
+        height = self._speakers.get("FRH", "NON") != "NON"
+        target = "ON" + ("H" if height else "") + ("W" if wide else "")
+        if target != "ON":
+            self._command("PSDSX ?", "PS")
+            self._read(0.3)
+            if self._dsx != target:
+                self._command(f"PSDSX {target}")
+                self._read(0.5)
+                self._command("PSDSX ?", "PS")
+                self._read(0.3)
+        self._surround_log(f"modus {self._ms or '?'}, DSX {self._dsx or '?'} (doel {target if target != 'ON' else '-'}), "
+                           f"wide={'ja' if wide else 'nee'} height={'ja' if height else 'nee'}")
+
+    def _surround_log(self, text):
+        self.surround_log = (self.surround_log + [f"{time.strftime('%H:%M:%S')} {text}"])[-20:]
 
     def _off(self):
         """Switches to standby and waits until the receiver confirms it."""
@@ -737,10 +780,23 @@ class Receiver(_Worker):
             elif line in ("MUON", "MUOFF"):
                 changed = changed or (line == "MUON") != self._muted
                 self._muted = line == "MUON"
+            elif line.startswith("MS") and not line.startswith("MSQUICK"):
+                self._ms = line[2:].strip()
+            elif line.startswith("PSDSX "):
+                self._dsx = line[6:].strip()
+            elif line.startswith("SSSPC") and len(line) > 9:
+                # 'SSSPCFRW SMA'; some parts come twice (SBK SMA, SBK 2SP): the first is the size
+                self._speakers.setdefault(line[5:8], line[8:].strip())
         if changed and self._mv is not None:
             self.on_volume(self._mv, bool(self._muted))
 
     def _idle(self):
+        if self._surround_due and time.monotonic() >= self._surround_due:
+            self._surround_due = 0.0
+            try:
+                self._apply_surround()
+            except (OSError, DeviceError) as e:
+                self._surround_log(f"mislukt: {e}")
         try:
             self._read()
             if self._sock is not None and time.monotonic() - self._rx_at > self.HEARTBEAT:
@@ -845,6 +901,7 @@ class Devices(QObject):
         if r["enabled"] and r["host"]:
             if self.receiver is None:
                 self.receiver = Receiver(r["host"], self.error.emit, self.receiver_volume.emit)
+            self.receiver.all_speakers = r.get("all_speakers", True)
             self.receiver.power_on(r["input"])
         self._on = True
 
@@ -885,7 +942,11 @@ class Devices(QObject):
     def reconfigure(self, old):
         """After the settings changed: restart the devices whose connection settings changed."""
         def connection(key, data):
-            return {k: v for k, v in data[key].items() if k not in ("volume_control", "max_volume_db")}
+            return {k: v for k, v in data[key].items() if k not in ("volume_control", "max_volume_db", "all_speakers")}
+        if self.receiver is not None:
+            self.receiver.all_speakers = self.cfg["receiver"].get("all_speakers", True)
+            if self.receiver.all_speakers and not old["receiver"].get("all_speakers", True):
+                self.receiver.refresh_surround()
         changed = [k for k in ("projector", "receiver") if connection(k, old) != connection(k, self.cfg)]
         if not changed:
             return
@@ -914,3 +975,7 @@ class Devices(QObject):
     def set_muted(self, muted):
         if self.controls_volume:
             self.receiver.set_muted(muted)
+
+    def refresh_surround(self):
+        if self.receiver is not None:
+            self.receiver.refresh_surround()

@@ -58,8 +58,9 @@ DEFAULTS = {
     # auto_on: switch on when CinemaViewer starts; otherwise with the button in the top bar
     "projector": {"enabled": False, "auto_on": False, "protocol": "pjlink", "host": "", "password": "", "serial_port": "",
                   "baud": 0, "lamp_mode": "", "lamp_power": "", "lamp_warn_hours": 2000},
+    # all_speakers: stereo becomes surround and Audyssey DSX adds the wide/height speakers (7.1 -> 9.x)
     "receiver": {"enabled": False, "host": "", "input": "BD",              # Denon, e.g. AVR-4311
-                 "volume_control": False, "max_volume_db": -10},
+                 "volume_control": False, "max_volume_db": -10, "all_speakers": True},
     "local_folders": [],
     # SMB/NFS shares shown as media folders: {name, type: smb|nfs, server, share, username, domain}.
     # Passwords are not kept here (Windows Credential Manager / root-only file on Linux).

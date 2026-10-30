@@ -190,6 +190,12 @@ elke start aan: *Ook automatisch aanzetten bij het starten van CinemaViewer* (In
   aan) en controleert hij of de receiver elke wijziging bevestigt. Valt de verbinding stil weg, dan wordt
   ze opnieuw opgebouwd en de opdracht nogmaals verstuurd; bij stilte wordt elke 30 seconden gecontroleerd
   of de verbinding nog leeft.
+  Met **alle luidsprekers** (standaard aan) leest CinemaViewer de luidsprekerinstelling van de receiver
+  (`SSSPC ?`) en zet hij na het aanzetten en bij elke start van afspelen Audyssey DSX aan voor de front
+  wide- en/of height-luidsprekers (`PSDSX ONW`/`ONH`/`ONHW`): 7.1 wordt zo 9.1 (met twee subwoofers 9.2).
+  De PC stuurt via HDMI altijd 7.1 en spreidt stereo daar zelf over uit (PipeWire-upmix); komt er toch een
+  stereosignaal binnen, dan zet CinemaViewer de receiver op Dolby Pro Logic II (`MSDOLBY DIGITAL`).
+  Een modus die je zelf met de afstandsbediening kiest blijft staan tot je iets nieuws start.
 
 Bij het afsluiten wordt elk apparaat tot drie keer geprobeerd uit te zetten (de receiver moet stand-by
 bevestigen). Reageert de beamer en/of receiver dan nog niet, bijvoorbeeld omdat de beamer nog aan het

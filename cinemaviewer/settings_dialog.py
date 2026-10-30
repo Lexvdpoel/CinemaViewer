@@ -1098,6 +1098,9 @@ class SettingsDialog(FramelessDialog):
         self.av_input.setFixedWidth(160)
         self.av_volume = QCheckBox("Volume en dempen van CinemaViewer regelen de receiver")
         self.av_volume.setChecked(r["volume_control"])
+        self.av_speakers = QCheckBox("Altijd alle luidsprekers gebruiken (stereo wordt surround, 7.1 krijgt de "
+                                     "front wide/height erbij)")
+        self.av_speakers.setChecked(r.get("all_speakers", True))
         self.av_max = QSpinBox()
         self.av_max.setRange(-70, 18)
         self.av_max.setValue(int(r["max_volume_db"]))
@@ -1113,6 +1116,7 @@ class SettingsDialog(FramelessDialog):
         form.addRow("Ingang", self.av_input)
         form.addRow("", self.av_volume)
         form.addRow("Volume bij 100%", self.av_max)
+        form.addRow("", self.av_speakers)
         form.addRow("", test)
         form.addRow("", self.av_status)
         form.addRow("", _status(
@@ -1121,7 +1125,10 @@ class SettingsDialog(FramelessDialog):
             "bepaalt de schuifregelaar het volume van de receiver: 100% is het hierboven gekozen maximum "
             "(0 dB is referentieniveau). Draai je aan de knop of de afstandsbediening, dan volgt de "
             "schuifregelaar. Zet in de receiver onder Netwerk ‘Network Standby’ (netwerkstand-by) aan, "
-            "anders kan hij vanuit stand-by niet worden aangezet."))
+            "anders kan hij vanuit stand-by niet worden aangezet. Met ‘alle luidsprekers’ zet CinemaViewer bij "
+            "het starten van iets Audyssey DSX aan voor de front wide/height-luidsprekers die in de receiver zijn "
+            "ingesteld, en een stereosignaal op Dolby Pro Logic II; kies je op de afstandsbediening zelf een "
+            "andere modus, dan blijft die tot het volgende dat je start."))
         lay.addStretch()
         return w
 
@@ -1990,6 +1997,7 @@ class SettingsDialog(FramelessDialog):
         d["displaycast"].update(name=self.dc_name.text().strip(), autostart=self.dc_auto.isChecked())
         d["receiver"].update(enabled=self.av_enabled.isChecked(), host=self.av_host.text().strip(),
                              input=self.av_input.currentText().strip().upper() or "BD",
-                             volume_control=self.av_volume.isChecked(), max_volume_db=self.av_max.value())
+                             volume_control=self.av_volume.isChecked(), max_volume_db=self.av_max.value(),
+                             all_speakers=self.av_speakers.isChecked())
         self._collect_dmx()
         self.accept()
