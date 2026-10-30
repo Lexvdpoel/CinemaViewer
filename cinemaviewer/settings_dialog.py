@@ -15,7 +15,7 @@ from . import __version__, display, shares, updater
 from .cast.manager import default_name as default_cast_name
 from .devices import (DENON_INPUTS, INFOCUS_BAUDS, LAMP_MODES, LAMP_POWERS, DeviceError, InFocusProjector,
                       Projector, Receiver)
-from .dmx import LAMP_TYPES, STATE_NAMES, lamp_max, serial_ports
+from .dmx import LAMP_TYPES, MUSIC_MODES, MUSIC_SPEEDS, STATE_NAMES, lamp_max, serial_ports
 from .dialogs import FramelessDialog, message, pick_folder
 from .screens import IdentifyOverlay
 from .security import check_password, hash_password
@@ -1606,22 +1606,86 @@ class SettingsDialog(FramelessDialog):
         m = d["music"]
         self.dmx_music_enabled = QCheckBox("Lampen laten meebewegen met afgespeelde nummers")
         self.dmx_music_enabled.setChecked(m["enabled"])
-        self.dmx_music_mode = QComboBox()
-        self.dmx_music_mode.addItems(["Mee met de bas", "Kleurencyclus", "Spectrum over de lampen"])
-        self.dmx_music_mode.setCurrentIndex(("bass", "cycle", "spectrum").index(m["mode"]))
-        self.dmx_music_mode.setFixedWidth(220)
+        self.dmx_music_mode = self._music_mode_combo(m.get("mode", "bass"))
         self.dmx_music_sens = QSpinBox()
         self.dmx_music_sens.setRange(0, 100)
+        self.dmx_music_sens.setSuffix("%")
         self.dmx_music_sens.setValue(int(m["sensitivity"]))
         self.dmx_music_sens.setFixedWidth(160)
+        self.dmx_music_speed = QComboBox()
+        for key, (text, _seconds) in MUSIC_SPEEDS.items():
+            self.dmx_music_speed.addItem(text, key)
+        self.dmx_music_speed.setCurrentIndex(max(0, self.dmx_music_speed.findData(m.get("speed", "normal"))))
+        self.dmx_music_speed.setFixedWidth(160)
+        self.dmx_music_per_lamp = QComboBox()
+        self.dmx_music_per_lamp.addItems(["Alle lampen hetzelfde", "Iedere lamp een eigen functie"])
+        self.dmx_music_per_lamp.setCurrentIndex(1 if m.get("per_lamp") else 0)
+        self.dmx_music_per_lamp.setFixedWidth(260)
+        self.dmx_music_lamps = QWidget()
+        self._music_lamp_seed = list(m.get("lamps") or [])
+        self._music_lamp_rows = []
+        music_grid = QGridLayout(self.dmx_music_lamps)
+        music_grid.setContentsMargins(0, 0, 0, 0)
+        music_grid.setColumnMinimumWidth(0, 130)
+        music_grid.setColumnStretch(3, 1)
+        self.dmx_music_per_lamp.currentIndexChanged.connect(self._music_per_lamp_changed)
         form.addRow("", self.dmx_music_enabled)
-        form.addRow("Muziekmodus", self.dmx_music_mode)
+        form.addRow("Lampen", self.dmx_music_per_lamp)
+        form.addRow("Functie", self.dmx_music_mode)
         form.addRow("Gevoeligheid", self.dmx_music_sens)
+        form.addRow("", self.dmx_music_lamps)
+        form.addRow("Reactiesnelheid", self.dmx_music_speed)
         form.addRow("", _status(
-            "Muziekmodus geldt bij afspelen van een nummer (geen film). CinemaViewer luisters mee via een "
-            "extra, stille VLC-verbinding; de lampen reageren dan binnen een tiende seconde."))
+            "De muziekstand geldt bij afspelen van een nummer of radio (geen film). Kleur en sterkte komen uit "
+            "de stand Muziek hierboven; de functie bepaalt hoe een lamp meebeweegt. Met ‘Iedere lamp een eigen "
+            "functie’ kan bv. de showbar op de bas flitsen terwijl een RGB-lamp de kleur van de muziek volgt. "
+            "Gevoeligheid: hoger = de lamp reageert al op zachte muziek. Reactiesnelheid: hoe snel een lamp "
+            "de muziek volgt (rustig = vloeiender)."))
         self._rebuild_dmx_states()
+        self._music_per_lamp_changed()
         return w
+
+    @staticmethod
+    def _music_mode_combo(current):
+        combo = QComboBox()
+        for key, text in MUSIC_MODES.items():
+            combo.addItem(text, key)
+        combo.setCurrentIndex(max(0, combo.findData(current)))
+        combo.setFixedWidth(330)
+        return combo
+
+    def _music_per_lamp_changed(self):
+        own = self.dmx_music_per_lamp.currentIndex() == 1
+        self.dmx_music_mode.setEnabled(not own)
+        self.dmx_music_sens.setEnabled(not own)
+        self.dmx_music_lamps.setVisible(own)
+
+    def _rebuild_music_lamps(self, lamps):
+        """One row per lamp: its own function and sensitivity in the music mode."""
+        if not hasattr(self, "dmx_music_lamps"):
+            return
+        old = [{"mode": r["mode"].currentData(), "sensitivity": r["sens"].value()} for r in self._music_lamp_rows]
+        seed = old or self._music_lamp_seed
+        grid = self.dmx_music_lamps.layout()
+        while grid.count():
+            item = grid.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        self._music_lamp_rows = []
+        for i, lamp in enumerate(lamps):
+            entry = seed[i] if i < len(seed) else {}
+            grid.addWidget(QLabel(lamp["name"]), i, 0)
+            mode = self._music_mode_combo(entry.get("mode", self.dmx_music_mode.currentData()))
+            mode.setFixedWidth(330)
+            grid.addWidget(mode, i, 1)
+            sens = QSpinBox()
+            sens.setRange(0, 100)
+            sens.setSuffix("%")
+            sens.setValue(int(entry.get("sensitivity", self.dmx_music_sens.value())))
+            sens.setToolTip("Gevoeligheid van deze lamp")
+            sens.setFixedWidth(100)
+            grid.addWidget(sens, i, 2)
+            self._music_lamp_rows.append({"mode": mode, "sens": sens})
 
     def _dmx_lamp_list(self):
         lamps = []
@@ -1667,6 +1731,7 @@ class SettingsDialog(FramelessDialog):
         if not getattr(self, "dmx_states", None):
             return
         lamps = self._dmx_lamp_list()
+        self._rebuild_music_lamps(lamps)
         for widgets in self.dmx_states.values():
             rows_data = widgets.pop("seed", None)
             if rows_data is None:
@@ -1748,8 +1813,12 @@ class SettingsDialog(FramelessDialog):
             lamps=self._dmx_lamp_list(), states=states)
         self.data["dmx"]["music"].update(
             enabled=self.dmx_music_enabled.isChecked(),
-            mode=("bass", "cycle", "spectrum")[self.dmx_music_mode.currentIndex()],
-            sensitivity=self.dmx_music_sens.value())
+            mode=self.dmx_music_mode.currentData(),
+            sensitivity=self.dmx_music_sens.value(),
+            speed=self.dmx_music_speed.currentData(),
+            per_lamp=self.dmx_music_per_lamp.currentIndex() == 1,
+            lamps=[{"mode": r["mode"].currentData(), "sensitivity": r["sens"].value()}
+                   for r in self._music_lamp_rows])
 
     def _dmx_test(self, name):
         """Past de staat direct toe met de waarden in dit venster (opslaan of annuleren maakt definitief)."""

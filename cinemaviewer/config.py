@@ -88,7 +88,9 @@ DEFAULTS = {
             "pauze":  {"transition": 2.0, "lamps": [{"color": [255, 170, 90], "level": 60}]},
             "muziek": {"transition": 0.4, "lamps": [{"color": [255, 120, 60], "level": 85}]},
         },
-        "music": {"enabled": True, "mode": "bass", "sensitivity": 70},  # mode: bass | cycle | spectrum
+        # mode: see dmx.MUSIC_MODES; per_lamp: every lamp its own mode/sensitivity in "lamps"
+        "music": {"enabled": True, "mode": "bass", "sensitivity": 70, "speed": "normal", "per_lamp": False,
+                  "lamps": []},
     },
 }
 

@@ -19,6 +19,18 @@ TICK_MS = 40
 CHANNELS = {"dimmer": 1, "rgb": 3, "rgbw": 4, "cct": 2}
 LAMP_TYPES = ("dimmer", "rgb", "rgbw", "cct")
 STATE_NAMES = {"film": "Film", "pauze": "Pauze", "muziek": "Muziek"}
+MUSIC_MODES = {  # wat een lamp doet in de muziekstand
+    "bass": "Mee met de bas",
+    "mid": "Mee met het midden (zang)",
+    "treble": "Mee met het hoog",
+    "flash": "Flitsen op de beat",
+    "cycle": "Kleurencyclus",
+    "color": "Kleur op de muziek (bas rood, midden groen, hoog blauw)",
+    "spectrum": "Spectrum over de lampen",
+    "static": "Vast (stand Muziek)",
+    "off": "Uit",
+}
+MUSIC_SPEEDS = {"fast": ("Snel", 0.06), "normal": ("Normaal", 0.15), "calm": ("Rustig", 0.4)}
 
 
 def lamp_max(lamp):
@@ -231,6 +243,8 @@ class DmxEngine(QObject):
         self.last_error = None
         self._hue = 0.0
         self._bands = [0.0] * 12
+        self._bass_avg = 0.0
+        self._flash = 0.0
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
         self._timer.timeout.connect(self._tick)
@@ -354,25 +368,47 @@ class DmxEngine(QObject):
         """Van de audio-analyse (≈20× per seconde): bereken het doelframe voor de huidige mode."""
         if not (self.active and self.music_on) or self.manual is not None:
             return
-        sens = max(0.0, min(100.0, float(self.data["music"]["sensitivity"]))) / 100.0 * 2.0
-        bass = min(1.0, levels[0] * sens)
-        self._bands = bands
-        mode = self.data["music"]["mode"]
-        base = self._state_frame("muziek")
+        music = self.data["music"]
+        lamps = self.data["lamps"]
+        own = music.get("lamps") or [] if music.get("per_lamp") else []
+        raw_bass, mid, treble = (list(levels) + [0.0, 0.0, 0.0])[:3]
+        self._bands = list(bands) or [0.0]
+        # beat: the bass jumps clearly above its running average; a flash then dies out in ~0,3 s
+        beat = raw_bass > 0.25 and raw_bass > self._bass_avg * 1.35
+        self._bass_avg = self._bass_avg * 0.92 + raw_bass * 0.08
+        self._flash = 1.0 if beat else self._flash * 0.6
+        self._hue = (self._hue + 0.006 + 0.03 * min(1.0, raw_bass * 1.4)) % 1.0
         frame = [0.0] * FRAME_LEN
-        self._hue = (self._hue + 0.006 + 0.03 * bass) % 1.0
-        for lamp, entry in zip(self.data["lamps"], self.data["states"]["muziek"].get("lamps", [])):
+        for i, (lamp, entry) in enumerate(zip(lamps, self.state_lamps("muziek"))):
+            setting = own[i] if i < len(own) else music
+            mode = setting.get("mode", "bass")
+            sens = max(0.0, min(100.0, float(setting.get("sensitivity", 70)))) / 100.0 * 2.0
+            bass, m, t = (min(1.0, v * sens) for v in (raw_bass, mid, treble))
             color, level = list(entry.get("color") or [255, 255, 255]), float(entry.get("level", 0))
             if mode == "cycle":
                 color = list(hsv_to_rgb(self._hue, 0.9, 255))
                 level *= 0.35 + 0.65 * bass
-            elif mode == "spectrum":
-                idx = self._index_of(lamp)
-                level *= 0.15 + 0.85 * (self._bands[idx % len(self._bands)] * sens)
-            else:  # "bass": meedansen op de bas
+            elif mode == "spectrum":  # the lamps share the bands from low to high
+                band = self._bands[min(len(self._bands) - 1, i * len(self._bands) // max(1, len(lamps)))]
+                level *= 0.15 + 0.85 * min(1.0, band * sens)
+            elif mode == "mid":
+                level *= 0.2 + 0.8 * m * m
+            elif mode == "treble":
+                level *= 0.15 + 0.85 * t * t
+            elif mode == "flash":
+                level *= self._flash if sens else 0.0
+            elif mode == "color":
+                if lamp.get("type") in ("rgb", "rgbw"):
+                    color = [int(255 * bass), int(255 * m), int(255 * t)]
+                    level *= 0.3 + 0.7 * max(bass, m, t)
+                else:  # a single colour: just the strength of the music
+                    level *= 0.2 + 0.8 * max(bass, m, t)
+            elif mode == "off":
+                level = 0.0
+            elif mode != "static":  # "bass": meedansen op de bas
                 level *= 0.2 + 0.8 * bass * bass
             self._paint(frame, lamp, color, max(0.0, min(100.0, level)))
-        self._set_target(frame, 0.15)
+        self._set_target(frame, MUSIC_SPEEDS.get(music.get("speed", "normal"), MUSIC_SPEEDS["normal"])[1])
 
     def _index_of(self, lamp):
         lamps = self.data["lamps"]
