@@ -235,6 +235,12 @@ bij een verkeerde of te late resolutie. Bij **Geluidsuitgang** kies je waar het 
 Linux zet *HDMI forceren* het HDMI-profiel van de geluidskaart aan, ook als PipeWire/PulseAudio de uitgang
 als ‘niet beschikbaar’ toont.
 
+**Schermindeling in de kiosk** (Linux): na het opstarten toont X alle schermen als kopie van elkaar (in een
+resolutie die ze allemaal aankunnen, vaak 720×576); alleen een bureaublad zet de opgeslagen indeling terug.
+CinemaViewer neemt daarom bij het starten de indeling over die in de scherminstellingen van Cinnamon is
+opgeslagen (admin omgeving → Beeldscherminstellingen → *Toepassen* → *Deze configuratie behouden*), en zet
+anders alle aangesloten schermen naast elkaar in hun beste resolutie.
+
 **Meer schermen dan de videokaart aankan** (Linux): het tabblad *Uitgangen* toont per uitgang de videokaart en
 hoeveel schermen elke kaart tegelijk aanstuurt. Een GT 520 heeft drie aansluitingen (VGA, DVI, HDMI) maar
 stuurt er maar **twee** tegelijk aan. Gebruik voor een derde scherm de ingebouwde videokaart van het

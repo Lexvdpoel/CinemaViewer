@@ -148,6 +148,10 @@ def link_graphics_cards():
     pass  # Windows uses every video card by itself
 
 
+def restore_desktop_layout():
+    return ""  # Windows keeps its own layout
+
+
 def card_capacity():
     return {}  # Windows lists only the outputs it can drive
 

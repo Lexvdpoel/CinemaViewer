@@ -347,6 +347,11 @@ class CinemaApp(QObject):
             display.link_graphics_cards()  # outputs of a second card (e.g. the Intel on board) become usable
         except OSError as e:
             errors.append(f"tweede videokaart: {e}")
+        if retry:  # at start: the kiosk has no desktop that restores the screen layout
+            try:
+                display.restore_desktop_layout()
+            except OSError as e:
+                errors.append(f"schermindeling: {e}")
         for f in self.cfg["forced_outputs"]:
             try:
                 display.force_output(f["output"], int(f["width"]), int(f["height"]), float(f.get("rate") or 0),

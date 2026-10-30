@@ -203,6 +203,95 @@ def display_outputs():
     return outputs
 
 
+# -- the desktop's screen layout --------------------------------------------------------
+_MONITOR_FILES = ("~/.config/cinnamon-monitors.xml", "~/.config/monitors.xml")
+
+
+def saved_layout(connected):
+    """The layout saved in the display settings of Cinnamon (or GNOME) for exactly these connected
+    outputs: [{name, width, height, rate, x, y, primary}] plus [names to switch off], or None."""
+    import xml.etree.ElementTree as ET
+    want = set(connected)
+    for path in _MONITOR_FILES:
+        try:
+            root = ET.parse(os.path.expanduser(path)).getroot()
+        except (OSError, ET.ParseError):
+            continue
+        for conf in root.iter("configuration"):
+            on, off = [], []
+            for logical in conf.findall("logicalmonitor"):
+                for mon in logical.findall("monitor"):
+                    mode = mon.find("mode")
+                    try:
+                        on.append({"name": mon.findtext("monitorspec/connector", "").strip(),
+                                   "width": int(mode.findtext("width")), "height": int(mode.findtext("height")),
+                                   "rate": float(mode.findtext("rate") or 0),
+                                   "x": int(logical.findtext("x") or 0), "y": int(logical.findtext("y") or 0),
+                                   "primary": (logical.findtext("primary") or "").strip() == "yes"})
+                    except (AttributeError, TypeError, ValueError):
+                        break
+            for disabled in conf.findall("disabled"):
+                off += [c.text.strip() for c in disabled.iter("connector") if c.text]
+            if on and {o["name"] for o in on} | set(off) == want:
+                return on, off
+    return None
+
+
+def _cloned(active):
+    corners = [(o["x"], o["y"]) for o in active]
+    return len(corners) != len(set(corners))
+
+
+def restore_desktop_layout():
+    """At the start of the kiosk session: X itself shows all screens as copies of each other (in a
+    resolution they all share, often 720x576), and only the desktop restores its layout. So: the layout
+    saved in Cinnamon's display settings, or else every connected screen beside the previous one at its
+    own best resolution. Returns a short description of what was done, or '' when nothing was needed."""
+    _check_x11()
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+    if any(d in desktop for d in ("cinnamon", "gnome")):
+        return ""  # that desktop restores its own layout
+    outputs = display_outputs()
+    connected = [o for o in outputs if o["connected"]]
+    if len(connected) < 2:
+        return ""
+    by_name = {o["name"]: o for o in outputs}
+    saved = saved_layout([o["name"] for o in connected])
+    if saved is not None:
+        on, off = saved
+        args = ["xrandr"]
+        for o in on:
+            args += ["--output", o["name"], "--mode", f"{o['width']}x{o['height']}", "--pos", f"{o['x']}x{o['y']}"]
+            rates = next((m[2] for m in by_name[o["name"]]["modes"] if (m[0], m[1]) == (o["width"], o["height"])), [])
+            if o["rate"] and rates:
+                args += ["--rate", f"{min(rates, key=lambda r: abs(r - o['rate'])):.2f}"]
+            if o["primary"]:
+                args.append("--primary")
+        for name in off:
+            args += ["--output", name, "--off"]
+        _run(args)
+        return "schermindeling van het bureaublad hersteld"
+    active = [o for o in connected if o["active"]]
+    if len(active) == len(connected) and not _cloned(active):
+        return ""  # already side by side
+    # every screen beside the previous one, the primary first, as many as each card can drive
+    order = sorted(connected, key=lambda o: (not o["primary"], not o["active"], o["x"]))
+    capacity = card_capacity()
+    used = {}
+    args, x = ["xrandr"], 0
+    for o in order:
+        limit = capacity.get(o["card"])
+        if limit and used.get(o["card"], 0) >= limit:
+            args += ["--output", o["name"], "--off"]
+            continue
+        used[o["card"]] = used.get(o["card"], 0) + 1
+        width = o["modes"][0][0] if o["modes"] else 0  # xrandr lists the preferred/best mode first
+        args += ["--output", o["name"], "--auto", "--pos", f"{x}x0"]
+        x += width
+    _run(args)
+    return "schermen naast elkaar gezet"
+
+
 def _modeline(width, height, rate):
     """Timings for a mode the output does not offer itself (no EDID), via cvt or gtf."""
     for tool, args in (("cvt", [str(width), str(height), str(rate)]),

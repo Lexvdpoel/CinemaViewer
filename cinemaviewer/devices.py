@@ -231,7 +231,7 @@ WARMING = ("2", "3", "4", "5", "8", "9", "10", "15", "16")   # SYS values after 
 COOLING = ("0", "1", "11", "12")                             # ... after an accepted 'off'
 INFOCUS_STATUS = {
     "0": "stand-by (start)", "1": "stand-by", "2": "warmt op", "3": "warmt op", "4": "lamp ontsteekt",
-    "5": "lamp ontsteekt", "8": "beeld start", "9": "beeld start", "10": "aan", "11": "koelt af",
+    "5": "lamp ontsteekt", "7": "aan", "8": "beeld start", "9": "beeld start", "10": "aan", "11": "koelt af",
     "12": "koelt af", "13": "storing", "14": "storing", "15": "warmt op (koud)", "16": "beeld start",
 }
 INFOCUS_ERRORS = {
@@ -350,7 +350,7 @@ class InFocusLink:
         sent = f"({code}?)"
         self._send(sent.encode("ascii"))
         text = self._answer(sent)
-        return text.rpartition(",")[2].strip() if "," in text else text
+        return (text.rpartition(",")[2] if "," in text else text).strip().strip('"')
 
     def write(self, code, value):
         self._pace()
@@ -398,7 +398,7 @@ class InFocusProjector(_ProjectorWorker):
             power, system = link.read("PWR"), link.try_read("SYS")
         if system in ("11", "12"):
             return "cooling"
-        if system == "10":
+        if system in ("7", "10"):
             return "on"
         if system in WARMING:
             return "warming"
@@ -423,9 +423,9 @@ class InFocusProjector(_ProjectorWorker):
 
     def _apply_lamp_settings(self, link):
         mode = {"dual": 1, "single": 0}.get(self.cfg.get("lamp_mode", ""))
-        if mode is not None and link.try_read("DLI") != str(mode):
+        if mode is not None and _dual_mode(link.try_read("DLI")) != str(mode):
             link.write("DLI", mode)
-        power = {"normal": 1, "eco": 0}.get(self.cfg.get("lamp_power", ""))
+        power = {"normal": 0, "eco": 1}.get(self.cfg.get("lamp_power", ""))
         if power is not None and link.try_read("IPM") != str(power):
             link.write("IPM", power)
 
@@ -471,7 +471,15 @@ def read_infocus_status(link):
                           ("lamp2_hours", "LDH"), ("lamp1_on", "DLS"), ("lamp2_on", "DLD"),
                           ("dual", "DLI"), ("lamp_power", "IPM"), ("total_hours", "LMT")):
             s[key] = link.try_read(code)
+    s["dual"] = _dual_mode(s["dual"])
     return s
+
+
+def _dual_mode(value):
+    """DLI: '1'/'0', or a word such as BOTH on newer firmware."""
+    if value is None or value in ("0", "1"):
+        return value
+    return "1" if value.upper() in ("BOTH", "DUAL") else "0"
 
 
 def infocus_problems(s, cfg):
@@ -480,7 +488,8 @@ def infocus_problems(s, cfg):
     if s.get("error") in INFOCUS_ERRORS:
         out.append(INFOCUS_ERRORS[s["error"]])
     if s.get("power") == "1" and s.get("system") == "10":
-        lamps = ("1", "2") if s.get("dual") == "1" else ()
+        known = s.get("lamp1_on") in ("0", "1") and s.get("lamp2_on") in ("0", "1")
+        lamps = ("1", "2") if s.get("dual") == "1" and known else ()
         for n in lamps:
             if s.get(f"lamp{n}_on") == "0":
                 out.append(f"lamp {n} brandt niet (dubbele-lampmodus staat aan)")
@@ -497,7 +506,8 @@ def format_infocus_status(s, cfg):
     lines = [f"{s.get('model') or 'InFocus-projector'} – {state}"]
     for n in ("1", "2"):
         hours = _hours(s.get(f"lamp{n}_hours"))
-        burning = {"1": "brandt", "0": "uit"}.get(s.get(f"lamp{n}_on") or "", "")
+        both = s.get("lamp1_on") in ("0", "1") and s.get("lamp2_on") in ("0", "1")
+        burning = {"1": "brandt", "0": "uit"}.get(s.get(f"lamp{n}_on") or "", "") if both else ""
         if hours is not None or burning:
             lines.append(f"Lamp {n}: " + ", ".join(x for x in (f"{hours} uur" if hours is not None else "", burning)
                                                     if x))
@@ -505,7 +515,7 @@ def format_infocus_status(s, cfg):
     if s.get("dual") in ("0", "1"):
         extra.append("modus: " + ("beide lampen" if s["dual"] == "1" else "één lamp"))
     if s.get("lamp_power") in ("0", "1", "2"):
-        extra.append("vermogen: " + {"0": "eco", "1": "normaal", "2": "dimmen"}[s["lamp_power"]])
+        extra.append("vermogen: " + {"0": "normaal", "1": "eco", "2": "dimmen"}[s["lamp_power"]])
     if _hours(s.get("total_hours")) is not None:
         extra.append(f"projector totaal {_hours(s['total_hours'])} uur")
     if extra:
