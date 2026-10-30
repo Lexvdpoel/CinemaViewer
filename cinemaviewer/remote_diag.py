@@ -25,6 +25,10 @@ _C_ENV = dict(os.environ, LC_ALL="C")
 _LINUX_COMMANDS = [
     ("xrandr --query", ["xrandr", "--query"]),
     ("xrandr --listproviders", ["xrandr", "--listproviders"]),
+    ("xrandr --props (EDID en eigenschappen per uitgang)", ["xrandr", "--current", "--props"]),
+    ("kernel: HDMI/geluid", ["sh", "-c", "journalctl -k -b --no-pager | grep -iE 'nouveau|hdmi|hda|snd|eld|audio' | tail -n 80"]),
+    ("connectoren (kernel)", ["sh", "-c", "for c in /sys/class/drm/card*-*; do echo \"$c $(cat $c/status 2>/dev/null) "
+                                          "$(cat $c/enabled 2>/dev/null)\"; done"]),
     ("pactl info", ["pactl", "info"]),
     ("pactl list cards", ["pactl", "list", "cards"]),
     ("pactl list short sinks", ["pactl", "list", "short", "sinks"]),
