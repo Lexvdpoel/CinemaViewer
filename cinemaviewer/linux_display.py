@@ -294,7 +294,7 @@ def restore_desktop_layout(force=False):
 
 
 # -- hotplug ---------------------------------------------------------------------------
-_RR_SCREEN_CHANGE, _RR_CRTC_CHANGE, _RR_OUTPUT_CHANGE = 1, 2, 4
+_RR_SCREEN_CHANGE, _RR_CRTC_CHANGE, _RR_OUTPUT_CHANGE, _RR_OUTPUT_PROPERTY = 1, 2, 4, 8
 
 
 def output_states():
@@ -328,7 +328,9 @@ def watch_outputs(callback):
     dpy = x11.XOpenDisplay(None)  # a connection of its own, only used by the thread below
     if not dpy:
         return False
-    xrr.XRRSelectInput(dpy, x11.XDefaultRootWindow(dpy), _RR_SCREEN_CHANGE | _RR_CRTC_CHANGE | _RR_OUTPUT_CHANGE)
+    # (a property change: a new EDID on an output that stays connected, e.g. the projector behind the receiver)
+    xrr.XRRSelectInput(dpy, x11.XDefaultRootWindow(dpy),
+                       _RR_SCREEN_CHANGE | _RR_CRTC_CHANGE | _RR_OUTPUT_CHANGE | _RR_OUTPUT_PROPERTY)
     event = ctypes.create_string_buffer(256)  # XEvent is 24 longs
 
     def run():
@@ -341,6 +343,49 @@ def watch_outputs(callback):
 
     threading.Thread(target=run, name="output-watch", daemon=True).start()
     return True
+
+
+def follow_preferred_modes(skip=()):
+    """An output that runs in another mode than its device now prefers is switched to the preferred one.
+    A receiver that starts before the projector first passes its own EDID (often with 1080i preferred); when
+    the projector comes up, the EDID changes, but X keeps the old mode, which the projector may not show.
+    Outputs in `skip` (forced modes) and a layout saved in the desktop settings are left alone.
+    Returns ['HDMI-1: 1920x1080i -> 1920x1200', ...]."""
+    _check_x11()
+    text = _run(["xrandr", "--current"])
+    outputs, name = {}, None
+    for line in text.splitlines():
+        m = _OUTPUT_RE.match(line)
+        if m:
+            name = m.group(1) if m.group(2) == "connected" and m.group(4) is not None else None
+            if name:
+                outputs[name] = {"current": None, "preferred": None}
+            continue
+        if name and line.startswith(" ") and line.split():
+            mode, *tokens = line.split()
+            rates = []  # [rate, flags]; xrandr writes '59.95*+', or '59.95 +' with the flag apart
+            for token in tokens:
+                if token.strip("*+") or not rates:
+                    rates.append([token.strip("*+"), token])
+                else:
+                    rates[-1][1] += token
+            for rate, flags in rates:
+                if "*" in flags:
+                    outputs[name]["current"] = (mode, rate)
+                if "+" in flags and outputs[name]["preferred"] is None:
+                    outputs[name]["preferred"] = (mode, rate)
+    if saved_layout(list(outputs)) is not None:
+        return []
+    done = []
+    for name, o in outputs.items():
+        cur, pref = o["current"], o["preferred"]
+        if name in skip or not cur or not pref or cur == pref:
+            continue
+        if cur[0] == pref[0] and abs(float(cur[1]) - float(pref[1])) < 0.6:
+            continue  # same resolution, refresh rate within rounding
+        _run(["xrandr", "--output", name, "--mode", pref[0], "--rate", pref[1]])
+        done.append(f"{name}: {cur[0]}@{cur[1]} -> {pref[0]}@{pref[1]}")
+    return done
 
 
 def refresh_output(name):

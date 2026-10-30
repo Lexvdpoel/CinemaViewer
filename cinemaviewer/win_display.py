@@ -160,6 +160,10 @@ def route_all_audio(sink):
     pass
 
 
+def follow_preferred_modes(skip=()):
+    return []  # Windows picks the new preferred mode itself
+
+
 def set_audio_upmix(on):
     return False  # Windows: speaker fill is a setting of the sound card
 

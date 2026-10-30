@@ -260,6 +260,7 @@ class CinemaApp(QObject):
         if not newly:
             # e.g. a device switched off: forget its sound, so that it counts as new when it comes back
             QTimer.singleShot(5000, lambda: setattr(self, "_hdmi_audio", display.available_hdmi_audio()))
+            self._follow_preferred_modes()
             return
         QTimer.singleShot(2000, self._follow_hdmi_audio)  # its sound (ELD) shows up shortly after the picture
         try:
@@ -278,11 +279,22 @@ class CinemaApp(QObject):
         except OSError:
             pass
         errors = self.apply_forced_outputs(quiet=True)
+        self._follow_preferred_modes()
         self._output_states = display.output_states()
         if errors:
             self.control.toast("Nieuw scherm op " + ", ".join(newly) + ", maar: " + "; ".join(errors), ms=10000)
         else:
             self.control.toast("Scherm gevonden op " + ", ".join(newly) + ".", error=False)
+
+    def _follow_preferred_modes(self):
+        """A device behind an output changed (e.g. the projector came up behind the receiver): use the mode it
+        now prefers, unless that output has a forced mode."""
+        try:
+            changed = display.follow_preferred_modes({f.get("output") for f in self.cfg["forced_outputs"]})
+        except OSError as e:
+            changed = [f"mislukt: {e}"]
+        for line in changed:
+            self.output_log = (getattr(self, "output_log", []) + [f"{time.strftime('%H:%M:%S')} {line}"])[-20:]
 
     # -- diagnosis from a distance -------------------------------------------------
     def remote_diag_start(self, code=None, until=None):
@@ -355,6 +367,8 @@ class CinemaApp(QObject):
                      f"even hard: {self.player.gain_db:+.1f} dB")
         lines.append(f"  nu: {self.current.title if self.current else '-'}")
         lines.append(f"  schermmeldingen volgen: {getattr(self, 'watching_outputs', False)}")
+        lines.append("BEELD: VOORKEURSRESOLUTIE GEVOLGD")
+        lines += ["  " + line for line in getattr(self, "output_log", [])[-10:]] or ["  (nog niets)"]
         lines.append("GELUID VOLGT HDMI")
         lines += ["  " + line for line in getattr(self, "hdmi_audio_log", [])[-15:]] or ["  (nog niets)"]
         lines.append("COMMANDO'S OP AFSTAND " + ("(toegestaan)" if self.cfg["remote_diag"].get("commands")
