@@ -192,6 +192,8 @@ class NowShowingWidget(QWidget):
             self.update(self._progress_rect.adjusted(-4, -4, 4, 4).toAlignedRect())
 
     def set_preview_frame(self, image):
+        if image is not None and (image.isNull() or image.width() <= 0 or image.height() <= 0):
+            image = None  # an empty grab: no preview rather than a division by zero
         had_frame = self.frame is not None
         self.frame = image
         if had_frame != (image is not None):
@@ -225,12 +227,14 @@ class NowShowingWidget(QWidget):
             p.fillRect(0, 0, w, h, QColor(5, 5, 6, 205))
         else:
             paint_stage(p, w, h)
-        if item:
-            if self.frame is not None:
-                self._render_wide(p, w, h)
-            else:
-                self._render_classic(p, w, h)
-        p.end()
+        try:
+            if item:
+                if self.frame is not None:
+                    self._render_wide(p, w, h)
+                else:
+                    self._render_classic(p, w, h)
+        finally:
+            p.end()  # an open painter on a pixmap that is thrown away crashes Qt
         return pm
 
     def _draw_poster(self, p, rect, unit):
@@ -308,7 +312,7 @@ class NowShowingWidget(QWidget):
         times_h = unit * 0.03
         bar_h = max(3.0, unit * 0.005)
         footer = unit * 0.03 + bar_h + unit * 0.02 + times_h
-        aspect = self.frame.width() / max(1, self.frame.height())
+        aspect = self.frame.width() / max(1, self.frame.height()) or 16 / 9
         pv_w = w * 0.32
         pv_h = pv_w / aspect
         if pv_h > unit * 0.5:                  # portrait / 4:3 content: keep it in proportion

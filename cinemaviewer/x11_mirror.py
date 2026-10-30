@@ -102,8 +102,10 @@ class ScreenMirror(QThread):
                 return None
             data = ctypes.string_at(img.data, img.bytes_per_line * img.height)
             frame = QImage(data, img.width, img.height, img.bytes_per_line, QImage.Format_RGB32)
-            if frame.width() > self.width:
-                frame = frame.scaled(self.width, -1, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            if frame.width() > self.width:  # (scaled(width, -1, KeepAspectRatio) gives an empty image)
+                frame = frame.scaledToWidth(self.width, Qt.SmoothTransformation)
+            if frame.isNull():
+                return None
             return frame.copy()
         finally:
             x11.XDestroyImage(image)
