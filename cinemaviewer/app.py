@@ -26,6 +26,7 @@ from .dmx import DmxEngine
 from .models import MediaItem, fmt_size
 from .music import MusicAnalyzer
 from .images import ImageCache
+from .loudness import Loudness, gain_db
 from .mirror import ScreenMirror
 from .planning import plan_intermission
 from .player import Player
@@ -48,6 +49,7 @@ SOURCE_KEYS = ("jellyfin", "plex", "local_folders", "network_shares", "show_usb_
 AUDIO_KINDS = ("track", "audiocd", "radio")   # no picture: the projection shows the music screen
 SHUFFLE_WINDOW = 3600.0      # random play: a title may come by at most SHUFFLE_MAX times per hour
 SHUFFLE_MAX = 2
+START_MEASURE_WAIT = 5.0                   # seconds a song's start may wait for its first loudness measurement
 SERVER_RETRY = (5, 10, 15, 30, 60, 120)    # seconds before trying an unreachable Jellyfin/Plex again
 
 
@@ -83,6 +85,7 @@ class CinemaApp(QObject):
         self.images = ImageCache()
         self.player = Player()
         self.player.set_volume(self.cfg["volume"])
+        self.loudness = Loudness()
         self.devices = Devices(self.cfg)
         self.dmx = DmxEngine(self.cfg)
         self.music_analyzer = MusicAnalyzer()
@@ -348,7 +351,8 @@ class CinemaApp(QObject):
         lines += ["  surround: " + line for line in (receiver.surround_log if receiver else [])[-8:]]
         lines.append(f"  dmx: { {k: v for k, v in cfg['dmx'].items() if k != 'states'} }")
         lines.append("AFSPELEN")
-        lines.append(f"  speler: {self.player.state}, geluid via: {getattr(self.player, 'audio_device', '')}")
+        lines.append(f"  speler: {self.player.state}, geluid via: {getattr(self.player, 'audio_device', '')}, "
+                     f"even hard: {self.player.gain_db:+.1f} dB")
         lines.append(f"  nu: {self.current.title if self.current else '-'}")
         lines.append(f"  schermmeldingen volgen: {getattr(self, 'watching_outputs', False)}")
         lines.append("GELUID VOLGT HDMI")
@@ -993,9 +997,31 @@ class CinemaApp(QObject):
             if advance_on_error and self.queue:
                 self._next_from_queue()
 
-        run_async(src.play_url, lambda mrl: self._start(item, mrl, start), failed, item)
+        def prepare(it):
+            mrl = src.play_url(it)
+            return mrl, (self.loudness.measure(it, mrl, wait=START_MEASURE_WAIT) if self._even_volume(it) else None)
 
-    def _start(self, item, mrl, start_ms):
+        run_async(prepare, lambda r: self._start(item, r[0], start, r[1]), failed, item)
+
+    def _even_volume(self, item):
+        return self.cfg.data.get("even_volume", True) and Loudness.applies(item)
+
+    def _measure_late(self, item, mrl):
+        """The first measurement of a song took longer than the start may wait: set its level once it is in."""
+        def apply(lufs):
+            if lufs is not None and self.current is item:
+                self.player.set_gain_db(gain_db(lufs))
+        run_async(lambda: self.loudness.measure(item, mrl), apply, None)
+
+    def _measure_next(self):
+        """Measure the next song while this one plays, so it starts at once at the right level."""
+        nxt = self.queue[0] if self.queue else None
+        src = self.sources.get(nxt.source) if nxt is not None else None
+        if src is None or not self._even_volume(nxt) or self.loudness.known(nxt) is not None:
+            return
+        run_async(lambda it: self.loudness.measure(it, src.play_url(it)), None, None, nxt)
+
+    def _start(self, item, mrl, start_ms, lufs=None):
         self.stop_browser_stream()
         if self.presentation is not None:
             self.close_presentation(sync=False)
@@ -1021,7 +1047,11 @@ class CinemaApp(QObject):
         self.control.set_music_mode(self._audio_mode)
         self._audio_meta = {}
         self._meta_tries = 0
+        self.player.set_gain_db(gain_db(lufs) if lufs is not None else 0.0)
         self.player.play(mrl, start_ms, item.extra.get("vlc_options", ()))
+        if lufs is None and self._even_volume(item) and Loudness.can_measure(mrl):
+            self._measure_late(item, mrl)
+        self._measure_next()
         self.control.set_now_playing(item)
         self.control.set_play_state("opening")
         self.control.set_planned_pause(None)

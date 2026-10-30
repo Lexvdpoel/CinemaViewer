@@ -512,6 +512,12 @@ class SettingsDialog(FramelessDialog):
         self.chk_follow_hdmi.setToolTip(
             "Komt er een HDMI-apparaat met geluid bij (bv. de AVR die opstart), dan gaat al het geluid daarheen "
             "en wordt dat de geluidsuitgang hierboven")
+        self.chk_even_volume = QCheckBox("Alle nummers even hard (luidheid per nummer gelijktrekken)")
+        self.chk_even_volume.setChecked(self.data.get("even_volume", True))
+        self.chk_even_volume.setToolTip(
+            "Elk nummer wordt één keer gemeten (of Jellyfin weet het al) en zachter of harder gezet, zodat "
+            "nummers rond hetzelfde volume klinken. Films en radio blijven zoals ze zijn.")
+        form.addRow("", self.chk_even_volume)
         if os.name != "nt":
             form.addRow("", self.chk_follow_hdmi)
             diag = QPushButton("Diagnose schermen en geluid…")
@@ -1936,6 +1942,7 @@ class SettingsDialog(FramelessDialog):
             return
         d["audio_output"] = dict(self.cb_audio.currentData())
         d["audio_follow_hdmi"] = self.chk_follow_hdmi.isChecked()
+        d["even_volume"] = self.chk_even_volume.isChecked()
         new_pw = self.pw_new.text()
         if new_pw or self.pw_repeat.text():
             problem = ""

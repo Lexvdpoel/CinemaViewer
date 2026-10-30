@@ -166,6 +166,8 @@ class JellyfinSource:
                 item.extra["series_image"] = self._img(d["SeriesId"], "Primary", d["SeriesPrimaryImageTag"])
         elif t == "Audio":
             item.extra.update(artist=d.get("AlbumArtist", ""), album=d.get("Album", ""))
+            if d.get("NormalizationGain") is not None:  # from Jellyfin's 'Audio normalization' task
+                item.extra["normalization_gain"] = d["NormalizationGain"]
         return item
 
     # -- playback -------------------------------------------------------------

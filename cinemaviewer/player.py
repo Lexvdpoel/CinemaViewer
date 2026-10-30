@@ -59,6 +59,7 @@ class Player(QObject):
         self.state = "idle"
         self._volume = 80
         self._muted = False
+        self.gain_db = 0.0         # this song turned up/down to an even level (see loudness.py)
         self.fixed_output = False  # True: VLC at full level, the receiver does the volume
         self.audio_device = ""     # VLC audio output device id; "" = system default
         self._grace_until = 0.0
@@ -144,8 +145,14 @@ class Player(QObject):
         self.fixed_output = bool(fixed)
         self._apply_audio()
 
+    def set_gain_db(self, db):
+        self.gain_db = float(db)
+        self._apply_audio()
+
     def _apply_audio(self):
-        self.mp.audio_set_volume(100 if self.fixed_output else self._volume)
+        base = 100 if self.fixed_output else self._volume
+        # VLC's volume works on a cubic scale (PulseAudio/PipeWire): +6 dB is 126%, −6 dB 79%
+        self.mp.audio_set_volume(min(200, int(round(base * 10 ** (self.gain_db / 60)))))
         self.mp.audio_set_mute(False if self.fixed_output else self._muted)
 
     # -- audio output device --------------------------------------------------

@@ -252,6 +252,12 @@ schermen opnieuw in en haalt het menu naar voren. Biedt het nieuwe HDMI-apparaat
 het geluid daarheen en wordt dat de geluidsuitgang (*Geluid naar het laatst aangesloten HDMI-apparaat met
 geluid*, onder Uitgangen; standaard aan).
 
+**Alle nummers even hard** (*Uitgangen*, standaard aan): van elk nummer wordt één keer de luidheid gemeten
+(EBU R128 met ffmpeg, 1–2 seconden; nummers die Jellyfins taak *Audio normalisatie* al heeft geanalyseerd
+hoeven niet) en de speler zet het nummer zachter of harder naar −16 LUFS (hooguit +6 dB erbij). Het volgende
+nummer in de wachtrij wordt al gemeten terwijl het huidige speelt. De metingen staan in `loudness.json` in
+de datamap. Films en radio blijven zoals ze zijn.
+
 **Meer schermen dan de videokaart aankan** (Linux): het tabblad *Uitgangen* toont per uitgang de videokaart en
 hoeveel schermen elke kaart tegelijk aanstuurt. Een GT 520 heeft drie aansluitingen (VGA, DVI, HDMI) maar
 stuurt er maar **twee** tegelijk aan. Gebruik voor een derde scherm de ingebouwde videokaart van het

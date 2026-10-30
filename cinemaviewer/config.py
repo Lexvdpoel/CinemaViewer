@@ -36,6 +36,7 @@ DEFAULTS = {
     # VLC audio device ("" = system default); on Linux optionally a forced card profile (HDMI)
     "audio_output": {"device": "", "card": "", "profile": ""},
     "audio_follow_hdmi": True,
+    "even_volume": True,  # songs at the same loudness (measured once per song, see loudness.py)
     "remote_diag": {"until": 0, "code": "", "firewall": False, "commands": False},  # read-only diagnosis page, on until this time (epoch seconds)  # all sound to the HDMI device that was connected last (if it takes sound)
     "lock_cursor": True,            # mouse pointer stays on the control screen
     "now_showing_on_other_screens": True,
