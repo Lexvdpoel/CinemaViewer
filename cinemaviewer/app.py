@@ -146,8 +146,10 @@ class CinemaApp(QObject):
         self._screen_timer.setSingleShot(True)
         self._screen_timer.setInterval(1000)
         self._screen_timer.timeout.connect(self.layout_screens)
-        qapp.screenAdded.connect(lambda _s: self._screen_timer.start())
+        qapp.screenAdded.connect(self._watch_screen)
         qapp.screenRemoved.connect(lambda _s: self._screen_timer.start())
+        for screen in qapp.screens():
+            screen.geometryChanged.connect(lambda _g: self._screen_timer.start())
         self._taskbar_timer = QTimer(self)
         self._taskbar_timer.setInterval(1500)
         self._taskbar_timer.timeout.connect(self._guard_taskbar)
@@ -212,6 +214,22 @@ class CinemaApp(QObject):
         if isinstance(idx, int) and 0 <= idx < len(screens) and (idx in matches or not matches):
             return idx
         return matches[0] if matches else None
+
+    def _watch_screen(self, screen):
+        # A screen that only moves or changes size (cloned screens put side by side) comes as
+        # geometryChanged, not as added/removed: lay out again then too.
+        screen.geometryChanged.connect(lambda _g: self._screen_timer.start())
+        self._screen_timer.start()
+
+    def reset_screens(self):
+        """Emergency key (Ctrl+Alt+R): lay the screens out again and bring the menu to the front."""
+        self.layout_screens()
+        self.control.showNormal()
+        self.control.place_on(QGuiApplication.screens()[self.resolve_screen_index(self.cfg["control_screen"], 0)],
+                              self.windowed)
+        self.control.raise_()
+        self.control.activateWindow()
+        self.control.toast("Schermen opnieuw ingedeeld.", error=False)
 
     def layout_screens(self):
         screens = QGuiApplication.screens()
@@ -347,11 +365,6 @@ class CinemaApp(QObject):
             display.link_graphics_cards()  # outputs of a second card (e.g. the Intel on board) become usable
         except OSError as e:
             errors.append(f"tweede videokaart: {e}")
-        if retry:  # at start: the kiosk has no desktop that restores the screen layout
-            try:
-                display.restore_desktop_layout()
-            except OSError as e:
-                errors.append(f"schermindeling: {e}")
         for f in self.cfg["forced_outputs"]:
             try:
                 display.force_output(f["output"], int(f["width"]), int(f["height"]), float(f.get("rate") or 0),
@@ -1513,6 +1526,10 @@ class CinemaApp(QObject):
                 sc = QShortcut(QKeySequence(key), window)
                 sc.setContext(Qt.WindowShortcut)
                 sc.activated.connect(fn)
+        if window is self.control:  # works in every CinemaViewer window, also when the menu is out of sight
+            sc = QShortcut(QKeySequence("Ctrl+Alt+R"), window)
+            sc.setContext(Qt.ApplicationShortcut)
+            sc.activated.connect(self.reset_screens)
         slide_bindings = [
             (("PgDown", "Right", "Down", "N"), lambda: self._slide(Presentation.next)),
             (("PgUp", "Left", "Up"), lambda: self._slide(Presentation.previous)),

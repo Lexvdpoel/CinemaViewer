@@ -35,6 +35,19 @@ def _splash(qapp):
     return splash
 
 
+def _prepare_screens():
+    """Linux kiosk: after a reboot X shows all screens on top of each other (cloned). Put them in their
+    place before Qt starts, so that it sees the real screens from the beginning."""
+    if sys.platform == "win32":
+        return
+    try:
+        from . import linux_display
+        linux_display.link_graphics_cards()
+        linux_display.restore_desktop_layout()
+    except Exception:  # noqa: BLE001 - never block the start; the screens stay as they are
+        pass
+
+
 def _quit_on_signals(qapp):
     """Linux: logging out or 'systemctl poweroff' sends SIGTERM/SIGHUP. Quit normally then, so that
     aboutToQuit still switches the lamps, projector and receiver off."""
@@ -68,6 +81,8 @@ def main():
         print("Ctrl+Alt+Del-beperkingen van CinemaViewer opgeheven.")
         return 0
 
+    if not args.windowed:
+        _prepare_screens()
     QGuiApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     # The browser (Qt WebEngine) moves between the operator and projection windows: they must share GL contexts.
     QApplication.setAttribute(Qt.AA_ShareOpenGLContexts)
