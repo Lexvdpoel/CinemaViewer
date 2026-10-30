@@ -15,7 +15,7 @@ from . import __version__, display, shares, updater
 from .cast.manager import default_name as default_cast_name
 from .devices import (DENON_INPUTS, INFOCUS_BAUDS, LAMP_MODES, LAMP_POWERS, DeviceError, InFocusProjector,
                       Projector, Receiver)
-from .dmx import LAMP_TYPES, STATE_NAMES, serial_ports
+from .dmx import LAMP_TYPES, STATE_NAMES, lamp_max, serial_ports
 from .dialogs import FramelessDialog, message, pick_folder
 from .screens import IdentifyOverlay
 from .security import check_password, hash_password
@@ -1515,12 +1515,15 @@ class SettingsDialog(FramelessDialog):
             "ArtNet stuurt via het netwerk naar een ArtNet-node (broadcast of vast IP-adres). USB-DMX werkt "
             "met Enttec-achtige adapters; ‘Automatisch’ kiest het protocol aan de hand van de adapter."))
 
-        self.dmx_lamps = QTableWidget(0, 3)
-        self.dmx_lamps.setHorizontalHeaderLabels(["Naam", "Type", "Startadres"])
+        self.dmx_lamps = QTableWidget(0, 4)
+        self.dmx_lamps.setHorizontalHeaderLabels(["Naam", "Type", "Startadres", "Max."])
         self.dmx_lamps.verticalHeader().setVisible(False)
         self.dmx_lamps.setColumnWidth(0, 170)
         self.dmx_lamps.setColumnWidth(1, 110)
         self.dmx_lamps.setColumnWidth(2, 90)
+        self.dmx_lamps.setColumnWidth(3, 90)
+        self.dmx_lamps.horizontalHeaderItem(3).setToolTip(
+            "Maximaal niveau van de lamp: 100% in een staat of op het lampenpaneel wordt dit percentage")
         self.dmx_lamps.setMinimumHeight(110)
         self.dmx_lamps.setMaximumHeight(200)
         form.addRow("Lampen", self.dmx_lamps)
@@ -1537,7 +1540,8 @@ class SettingsDialog(FramelessDialog):
             self._dmx_add_lamp_row(lamp)
         form.addRow("", _status(
             "Eén DMX-universe van 512 kanalen. Startadres 1–512; het type bepaalt het aantal kanalen: "
-            "dimmer = 1, rgb = 3 (rood/groen/blauw), rgbw = 4 (+ wit), cct = 2 (warm/koud)."))
+            "dimmer = 1, rgb = 3 (rood/groen/blauw), rgbw = 4 (+ wit), cct = 2 (warm/koud). "
+            "Max. begrenst een lamp die te fel is: met 40% wordt 100% in een staat of op het lampenpaneel 40%."))
 
         self.dmx_states = {}
         for name in ("film", "pauze", "muziek"):
@@ -1593,10 +1597,12 @@ class SettingsDialog(FramelessDialog):
             name_item = self.dmx_lamps.item(r, 0)
             combo = self.dmx_lamps.cellWidget(r, 1)
             addr_item = self.dmx_lamps.item(r, 2)
+            max_spin = self.dmx_lamps.cellWidget(r, 3)
             text = addr_item.text().strip() if addr_item else ""
             lamps.append({"name": (name_item.text().strip() if name_item else "") or f"Lamp {r + 1}",
                           "type": combo.currentText() if combo else "rgbw",
-                          "address": int(text) if text.isdigit() else 1})
+                          "address": int(text) if text.isdigit() else 1,
+                          "max": max_spin.value() if max_spin else 100})
         return lamps
 
     def _dmx_add_lamp_row(self, lamp=None):
@@ -1610,6 +1616,11 @@ class SettingsDialog(FramelessDialog):
         combo.currentIndexChanged.connect(self._rebuild_dmx_states)
         self.dmx_lamps.setCellWidget(r, 1, combo)
         self.dmx_lamps.setItem(r, 2, QTableWidgetItem(str(lamp.get("address", 1))))
+        max_spin = QSpinBox()
+        max_spin.setRange(1, 100)
+        max_spin.setSuffix("%")
+        max_spin.setValue(int(lamp_max(lamp)))
+        self.dmx_lamps.setCellWidget(r, 3, max_spin)
         self._rebuild_dmx_states()
 
     def _dmx_remove_lamp(self):

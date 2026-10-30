@@ -81,7 +81,7 @@ DEFAULTS = {
         "universe": 0,
         "usb_port": "",                # bijv. COM3 of /dev/ttyUSB0
         "usb_protocol": "auto",        # "auto" | "open" (Enttec Open) | "pro" (Enttec Pro)
-        "lamps": [{"name": "Voor", "type": "rgbw", "address": 1}],
+        "lamps": [{"name": "Voor", "type": "rgbw", "address": 1, "max": 100}],
         "states": {
             "film":   {"transition": 3.0, "lamps": [{"color": [0, 0, 0], "level": 8}]},
             "pauze":  {"transition": 2.0, "lamps": [{"color": [255, 170, 90], "level": 60}]},

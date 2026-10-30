@@ -21,9 +21,18 @@ LAMP_TYPES = ("dimmer", "rgb", "rgbw", "cct")
 STATE_NAMES = {"film": "Film", "pauze": "Pauze", "muziek": "Muziek"}
 
 
+def lamp_max(lamp):
+    """Het maximale niveau van een lamp (1–100%): 100% in een staat of op het lampenpaneel wordt dit."""
+    try:
+        return max(1.0, min(100.0, float(lamp.get("max", 100))))
+    except (TypeError, ValueError):
+        return 100.0
+
+
 def lamp_channels(lamp, color, level):
-    """Kanaalwaarden (0–255) van één lamp: kleur per type, vermenigvuldigd met het niveau (0–100)."""
-    lv = max(0.0, min(100.0, float(level))) / 100.0
+    """Kanaalwaarden (0–255) van één lamp: kleur per type, vermenigvuldigd met het niveau (0–100),
+    geschaald naar het maximum van de lamp."""
+    lv = max(0.0, min(100.0, float(level))) / 100.0 * lamp_max(lamp) / 100.0
     kind = lamp.get("type", "rgbw")
     if kind == "dimmer":
         return [int(round(255 * lv))]
