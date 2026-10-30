@@ -186,7 +186,16 @@ class CinemaApp(QObject):
         self.apply_forced_outputs(retry=True)  # before the screens are laid out
         self._output_states = display.output_states()
         self._hdmi_audio = display.available_hdmi_audio()
-        display.watch_outputs(self.outputs_poke.emit)  # e.g. an AVR that only passes its EDID once it is on
+        self.watching_outputs = display.watch_outputs(self.outputs_poke.emit)
+        self.hdmi_audio_log = []      # what 'geluid volgt HDMI' did, for the diagnosis
+        self._hdmi_audio_at_start()
+        # HDMI sound can come without a screen change (a receiver that passes its EDID in standby and
+        # its sound only once it is on): look every few seconds
+        self._hdmi_audio_timer = QTimer(self)
+        self._hdmi_audio_timer.setInterval(5000)
+        self._hdmi_audio_timer.timeout.connect(lambda: self._follow_hdmi_audio(attempt=4))
+        if sys.platform != "win32":
+            self._hdmi_audio_timer.start()  # e.g. an AVR that only passes its EDID once it is on
         self.apply_audio_output()
         self.layout_screens()
         self.reload_sources()
@@ -261,6 +270,16 @@ class CinemaApp(QObject):
         else:
             self.control.toast("Scherm gevonden op " + ", ".join(newly) + ".", error=False)
 
+    def _hdmi_audio_at_start(self):
+        """At start: when the chosen sound output is not there but a device on HDMI takes sound, use that."""
+        if not self.cfg.data.get("audio_follow_hdmi", True) or not self._hdmi_audio:
+            return
+        a = self.cfg["audio_output"]
+        if (a.get("card"), a.get("profile")) in self._hdmi_audio:
+            return
+        self._hdmi_audio = {}  # everything available counts as new
+        self._follow_hdmi_audio(attempt=4)
+
     def _follow_hdmi_audio(self, attempt=0):
         """A device was connected: when it takes sound (a new HDMI audio output became available), all
         sound goes there and it becomes the chosen sound output."""
@@ -276,13 +295,16 @@ class CinemaApp(QObject):
             return
         self._hdmi_audio = now
         (card, profile), desc = sorted(new.items())[-1]
+        self.hdmi_audio_log.append(f"{time.strftime('%H:%M:%S')} nieuw: {desc}")
         try:
             sink = display.force_audio_profile(card, profile)
             if sink:
                 display.route_all_audio(sink)
         except OSError as e:
+            self.hdmi_audio_log.append(f"  mislukt: {e}")
             self.control.toast(f"Geluid naar {desc} sturen mislukt: {e}", ms=10000)
             return
+        self.hdmi_audio_log.append(f"  geluid naar {sink}")
         self.cfg["audio_output"] = {"device": sink, "card": card, "profile": profile}
         self.cfg.save()
         try:

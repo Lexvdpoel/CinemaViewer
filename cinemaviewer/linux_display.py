@@ -349,6 +349,49 @@ def refresh_output(name):
     _run(["xrandr", "--output", name, "--off"])
 
 
+def diagnosis():
+    """What Linux sees of the screens and HDMI sound, as text for the settings (a photo of it says enough)."""
+    lines = ["SCHERMEN (xrandr --current)"]
+    for name, (connected, active) in sorted(output_states().items()):
+        lines.append(f"  {name}: {'aangesloten' if connected else 'niets'}{', actief' if active else ''}")
+    lines.append("VIDEOKAARTEN")
+    for p in providers():
+        lines.append(f"  {p['card']} ({p['name']}): {p['crtcs']} schermen, gekoppeld={p['linked']}, "
+                     f"uitgangen {', '.join(p['outputs'])}")
+    lines.append("HDMI-GELUID (pactl)")
+    profiles = _hdmi_profiles()
+    if not shutil.which("pactl"):
+        lines.append("  pactl ontbreekt")
+    for card, profile, desc, available in profiles:
+        lines.append(f"  {'JA ' if available else 'nee'} {desc}  [{card.replace('alsa_card.', '')} {profile}]")
+    try:
+        active = re.findall(r"Name: (\S+)[\s\S]*?Active Profile: (\S+)", _run(["pactl", "list", "cards"]))
+        for card, profile in active:
+            lines.append(f"  actief: {card.replace('alsa_card.', '')} -> {profile}")
+        lines.append("  standaard: " + _run(["pactl", "get-default-sink"]).strip())
+    except OSError as e:
+        lines.append(f"  pactl: {e}")
+    lines.append("ELD (wat het apparaat over geluid doorgeeft)")
+    for path in sorted(glob.glob("/proc/asound/card*/eld#*")):
+        try:
+            with open(path) as f:
+                info = dict(line.split(None, 1) for line in f.read().splitlines() if " " in line or "\t" in line)
+        except OSError:
+            continue
+        name = info.get("monitor_name", "").strip()
+        lines.append(f"  {path[12:]}: aanwezig={info.get('monitor_present', '?').strip()} "
+                     f"geldig={info.get('eld_valid', '?').strip()} {name}")
+    if not glob.glob("/proc/asound/card*/eld#*"):
+        lines.append("  geen ELD-bestanden: de HDMI-geluidskaart van de videokaart is niet gevonden")
+    try:
+        cards = open("/proc/asound/cards").read().strip()
+        lines.append("GELUIDSKAARTEN")
+        lines += ["  " + line.strip() for line in cards.splitlines() if line.strip() and not line.startswith(" " * 5)]
+    except OSError:
+        pass
+    return "\n".join(lines)
+
+
 def _modeline(width, height, rate):
     """Timings for a mode the output does not offer itself (no EDID), via cvt or gtf."""
     for tool, args in (("cvt", [str(width), str(height), str(rate)]),

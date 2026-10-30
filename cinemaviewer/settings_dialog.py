@@ -8,7 +8,7 @@ from PySide6.QtCore import QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QColorDialog, QDialog, QDoubleSpinBox,
                                QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                               QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget, QTableWidget,
+                               QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import __version__, display, shares, updater
@@ -505,6 +505,9 @@ class SettingsDialog(FramelessDialog):
             "en wordt dat de geluidsuitgang hierboven")
         if os.name != "nt":
             form.addRow("", self.chk_follow_hdmi)
+            diag = QPushButton("Diagnose schermen en geluid…")
+            diag.clicked.connect(self._show_diagnosis)
+            form.addRow("", diag)
         form.addRow("", _status(
             "Het geluid van films gaat naar deze uitgang, los van de standaarduitgang van het systeem. "
             + ("‘HDMI forceren’ zet onder Linux het HDMI-profiel van de geluidskaart aan, ook als het systeem "
@@ -512,6 +515,28 @@ class SettingsDialog(FramelessDialog):
                "kaart (bv. de luidsprekers van de laptop) gaan dan uit. " if os.name != "nt" else "")
             + "Wordt toegepast bij Opslaan."))
         return w
+
+    def _show_diagnosis(self):
+        """What Linux sees of screens and HDMI sound; a photo of it helps with support."""
+        text = display.diagnosis()
+        text += "\nCINEMAVIEWER\n  schermmeldingen volgen: " + ("ja" if getattr(self.app, "watching_outputs", False)
+                                                                 else "nee")
+        text += "\n  geluid volgt HDMI: " + ("aan" if self.chk_follow_hdmi.isChecked() else "uit")
+        text += "\n  gekozen geluid: " + str(self.app.cfg["audio_output"])
+        log = getattr(self.app, "hdmi_audio_log", [])
+        text += "\n" + ("\n".join("  " + line for line in log[-8:]) if log else "  nog geen HDMI-geluid gevonden")
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Diagnose")
+        dlg.resize(980, 680)
+        lay = QVBoxLayout(dlg)
+        view = QPlainTextEdit(text)
+        view.setReadOnly(True)
+        view.setStyleSheet("font-family: monospace; font-size: 13px;")
+        lay.addWidget(view)
+        close = QPushButton("Sluiten")
+        close.clicked.connect(dlg.accept)
+        lay.addWidget(close, alignment=Qt.AlignRight)
+        dlg.exec()
 
     def _add_output_row(self, forced=None):
         forced = forced or {}

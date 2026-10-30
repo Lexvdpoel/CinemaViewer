@@ -160,6 +160,10 @@ def route_all_audio(sink):
     pass
 
 
+def diagnosis():
+    return "Diagnose is er alleen onder Linux."
+
+
 def output_states():
     return {}
 
