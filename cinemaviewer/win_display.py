@@ -164,6 +164,12 @@ def diagnosis():
     return "Diagnose is er alleen onder Linux."
 
 
+def play_test_tone(device="", card="", profile=""):
+    import winsound
+    winsound.Beep(440, 1500)  # the default output; VLC's choice is only used by films
+    return "standaarduitgang"
+
+
 def output_states():
     return {}
 

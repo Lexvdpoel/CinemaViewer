@@ -498,7 +498,15 @@ class SettingsDialog(FramelessDialog):
             self.cb_audio.addItem(f"(niet gevonden) {current.get('profile') or current.get('device')}", dict(current))
             idx = self.cb_audio.count() - 1
         self.cb_audio.setCurrentIndex(idx)
-        form.addRow("Geluidsuitgang", self.cb_audio)
+        audio_row = QHBoxLayout()
+        audio_row.addWidget(self.cb_audio, 1)
+        tone = QPushButton("Testgeluid")
+        tone.setToolTip("Speelt 2 seconden een toon (eerst links, dan rechts) via de gekozen uitgang")
+        tone.clicked.connect(self._test_tone)
+        audio_row.addWidget(tone)
+        form.addRow("Geluidsuitgang", audio_row)
+        self.tone_status = _status("")
+        form.addRow("", self.tone_status)
         self.chk_follow_hdmi = QCheckBox("Geluid naar het laatst aangesloten HDMI-apparaat met geluid")
         self.chk_follow_hdmi.setChecked(self.data.get("audio_follow_hdmi", True))
         self.chk_follow_hdmi.setToolTip(
@@ -1215,6 +1223,19 @@ class SettingsDialog(FramelessDialog):
         lay.addWidget(self._remote_diag_box())
         lay.addStretch()
         return w
+
+    def _test_tone(self):
+        choice = self.cb_audio.currentData() or {}
+        self.tone_status.setText("Testgeluid speelt…")
+        self.tone_status.repaint()
+
+        def done(sink):
+            self.tone_status.setText(f"Testgeluid gespeeld via {sink}. Niets gehoord? Kies een andere uitgang "
+                                     "en probeer opnieuw.")
+
+        run_async(lambda: display.play_test_tone(choice.get("device", ""), choice.get("card", ""),
+                                                  choice.get("profile", "")),
+                  done, lambda err: self.tone_status.setText(f"Testgeluid mislukt: {err}"))
 
     def _remote_diag_box(self):
         box = QGroupBox("Diagnose op afstand")

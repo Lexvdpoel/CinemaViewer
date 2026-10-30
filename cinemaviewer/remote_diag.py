@@ -38,6 +38,13 @@ _LINUX_COMMANDS = [
     ("pipewire status", ["systemctl", "--user", "--no-pager", "status", "pipewire", "pipewire-pulse", "wireplumber"]),
     ("journal (deze sessie)", ["journalctl", "--user", "-b", "-n", "150", "--no-pager"]),
     ("ip -4 addr", ["ip", "-4", "addr"]),
+    ("kernel", ["uname", "-a"]),
+    ("modules (geluid/video)", ["sh", "-c", "lsmod | grep -E 'snd_hda|nouveau|i915|snd_sof' | sort"]),
+    ("hda-modulen opties", ["sh", "-c", "for m in snd_hda_intel snd_hda_codec_hdmi snd_hda_codec_nvhdmi; do "
+                                       "for p in /sys/module/$m/parameters/*; do [ -r \"$p\" ] && "
+                                       "echo \"$m.$(basename $p)=$(cat $p 2>/dev/null)\"; done; done"]),
+    ("NVIDIA-geluidschip (codec, pinnen)", ["sh", "-c", "for f in /proc/asound/NVidia/codec#*; do echo \"--- $f\"; "
+                                                       "cat \"$f\"; done"]),
 ]
 
 

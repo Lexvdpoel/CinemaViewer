@@ -527,6 +527,31 @@ def route_all_audio(sink):
                 pass  # a stream that just ended
 
 
+def play_test_tone(device="", card="", profile=""):
+    """Two seconds of a tone (left, then right) on a sound output, to hear whether it works. With card and
+    profile that HDMI profile is switched on first. Returns the sink it played on."""
+    import math, struct, tempfile, wave
+    if not shutil.which("paplay"):
+        raise OSError("paplay ontbreekt (pulseaudio-utils)")
+    sink = force_audio_profile(card, profile) if card and profile else device
+    handle, path = tempfile.mkstemp(suffix=".wav", prefix="cinemaviewer-tone-")
+    os.close(handle)
+    try:
+        with wave.open(path, "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            frames = bytearray()
+            for i in range(48000 * 2):
+                v = int(9000 * math.sin(2 * math.pi * 440 * i / 48000))
+                frames += struct.pack("<hh", v if i < 48000 else 0, v if i >= 48000 else 0)
+            w.writeframes(bytes(frames))
+        _run(["paplay"] + (["--device", sink] if sink else []) + [path], timeout=10)
+    finally:
+        os.unlink(path)
+    return sink or "standaarduitgang"
+
+
 def force_audio_profile(card, profile):
     """Activate the card profile and return the name of its sink (the VLC audio device)."""
     _run(["pactl", "set-card-profile", card, profile])
