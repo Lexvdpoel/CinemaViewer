@@ -1244,6 +1244,11 @@ class SettingsDialog(FramelessDialog):
         self.chk_remote_diag.setChecked(self.app.remote_diag is not None)
         self.chk_remote_diag.toggled.connect(self._remote_diag_toggled)
         bl.addWidget(self.chk_remote_diag)
+        self.chk_remote_cmd = QCheckBox("Ook commando's laten uitvoeren (volledige toegang als gebruiker "
+                                        "van CinemaViewer, geen beheerder)")
+        self.chk_remote_cmd.setChecked(bool(self.app.cfg["remote_diag"].get("commands")))
+        self.chk_remote_cmd.toggled.connect(self._remote_cmd_toggled)
+        bl.addWidget(self.chk_remote_cmd)
         self.remote_diag_info = _status("")
         self.remote_diag_info.setTextInteractionFlags(Qt.TextSelectableByMouse)
         bl.addWidget(self.remote_diag_info)
@@ -1254,6 +1259,11 @@ class SettingsDialog(FramelessDialog):
             "netwerk (of via een VPN). Gaat direct aan of uit, ook zonder Opslaan."))
         self._show_remote_diag()
         return box
+
+    def _remote_cmd_toggled(self, on):
+        self.app.cfg["remote_diag"]["commands"] = on
+        self.app.cfg.save()
+        self._show_remote_diag()
 
     def _remote_diag_toggled(self, on):
         if on and self.app.remote_diag is None:
@@ -1270,11 +1280,20 @@ class SettingsDialog(FramelessDialog):
         self._show_remote_diag()
 
     def _show_remote_diag(self):
+        self.chk_remote_cmd.setEnabled(self.app.remote_diag is not None)
         if self.app.remote_diag is None:
+            self.chk_remote_cmd.blockSignals(True)
+            self.chk_remote_cmd.setChecked(False)
+            self.chk_remote_cmd.blockSignals(False)
             self.remote_diag_info.setText("Uit.")
             return
         until = time.strftime("%H:%M", time.localtime(self.app.cfg["remote_diag"]["until"]))
-        self.remote_diag_info.setText("Aan tot " + until + ". Adres:\n" + "\n".join(self.app.remote_diag_addresses()))
+        text = "Aan tot " + until + ". Adres:\n" + "\n".join(self.app.remote_diag_addresses())
+        if self.app.cfg["remote_diag"].get("commands"):
+            text += "\nCommando's toegestaan."
+            if self.app.remote_command_log:
+                text += " Laatste:\n" + "\n".join(self.app.remote_command_log[-5:])
+        self.remote_diag_info.setText(text)
     def _browser_box(self):
         box = QGroupBox("Browser")
         form = QFormLayout(box)

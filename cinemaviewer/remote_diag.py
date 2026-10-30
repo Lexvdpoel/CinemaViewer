@@ -1,8 +1,10 @@
-"""Diagnose op afstand: een webpagina die alleen leest (schermen, videokaarten, HDMI-geluid, logregels).
+"""Diagnose op afstand: een webpagina met schermen, videokaarten, HDMI-geluid en logregels.
 
 Aan te zetten in Instellingen → Systeem; gaat na HOURS uur vanzelf uit. Alleen wie de code kent krijgt de
-pagina (http://<ip>:PORT/<code>); na te veel foute codes stopt de poort. Er wordt niets uitgevoerd of
-gewijzigd op verzoek van buiten, en wachtwoorden en tokens staan er nooit in.
+pagina (GET http://<ip>:PORT/<code>); na te veel foute codes stopt de poort. Wachtwoorden en tokens staan
+er nooit in. Alleen met het aparte vinkje 'commando's toestaan' voert POST http://<ip>:PORT/<code>/run een
+shellcommando uit (als de gebruiker van CinemaViewer, niet als root) en geeft de uitvoer terug; elk
+commando wordt gelogd.
 """
 
 import glob
@@ -18,6 +20,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PORT = 8765
 HOURS = 4
 MAX_FAILURES = 20
+COMMAND_TIMEOUT = 120
+OUTPUT_LIMIT = 400_000
 
 _C_ENV = dict(os.environ, LC_ALL="C")
 
@@ -69,7 +73,26 @@ def firewall_script():
 
 
 def new_code():
-    return secrets.token_hex(4)
+    return secrets.token_hex(6)
+
+
+def run_command(command):
+    """A shell command from the support side; returns its output and exit code as text."""
+    shell = ["bash", "-c", command] if sys.platform != "win32" else ["powershell", "-NoProfile", "-Command", command]
+    started = time.monotonic()
+    try:
+        result = subprocess.run(shell, capture_output=True, timeout=COMMAND_TIMEOUT, env=_C_ENV,
+                                stdin=subprocess.DEVNULL)
+        out = (result.stdout + result.stderr).decode("utf-8", "replace")
+        code = result.returncode
+    except subprocess.TimeoutExpired as e:
+        out = ((e.stdout or b"") + (e.stderr or b"")).decode("utf-8", "replace") + f"\n(afgebroken na {COMMAND_TIMEOUT} s)"
+        code = -1
+    except OSError as e:
+        out, code = str(e), -1
+    if len(out) > OUTPUT_LIMIT:
+        out = out[:OUTPUT_LIMIT] + f"\n… ({len(out) - OUTPUT_LIMIT} tekens weggelaten)"
+    return f"{out.rstrip()}\n[exit {code}, {time.monotonic() - started:.1f} s]\n"
 
 
 def _command(args):
@@ -105,10 +128,13 @@ def system_report():
 
 
 class DiagServer:
-    def __init__(self, code, app_report):
-        """app_report(): text about the app, prepared in the GUI thread (Qt is not thread-safe)."""
+    def __init__(self, code, app_report, allow_commands=lambda: False, on_command=None):
+        """app_report(): text about the app, prepared in the GUI thread (Qt is not thread-safe).
+        allow_commands(): whether /run may execute; on_command(text) is told about every command."""
         self.code = code
         self.app_report = app_report
+        self.allow_commands = allow_commands
+        self.on_command = on_command
         self.failures = 0
         self._server = None
 
@@ -116,14 +142,34 @@ class DiagServer:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
+            def _authorized(self, suffix=""):
                 given = self.path.strip("/").split("?", 1)[0]
-                if not hmac.compare_digest(given.encode(), owner.code.encode()):
-                    owner.failures += 1
-                    time.sleep(1.0)
-                    self._send(403, "Onjuiste code.\n")
-                    if owner.failures >= MAX_FAILURES:  # someone is guessing: close the port
-                        threading.Thread(target=owner.stop, daemon=True).start()
+                if hmac.compare_digest(given.encode(), (owner.code + suffix).encode()):
+                    return True
+                owner.failures += 1
+                time.sleep(1.0)
+                self._send(403, "Onjuiste code.\n")
+                if owner.failures >= MAX_FAILURES:  # someone is guessing: close the port
+                    threading.Thread(target=owner.stop, daemon=True).start()
+                return False
+
+            def do_POST(self):
+                if not self._authorized("/run"):
+                    return
+                if not owner.allow_commands():
+                    self._send(403, "Commando's zijn niet toegestaan (Instellingen → Systeem).\n")
+                    return
+                length = min(int(self.headers.get("Content-Length") or 0), 100_000)
+                command = self.rfile.read(length).decode("utf-8", "replace").strip()
+                if not command:
+                    self._send(400, "Geen commando.\n")
+                    return
+                if owner.on_command:
+                    owner.on_command(command)
+                self._send(200, run_command(command))
+
+            def do_GET(self):
+                if not self._authorized():
                     return
                 try:
                     text = owner.app_report() + "\n\n" + system_report()

@@ -73,6 +73,7 @@ def keep_display_awake():
 
 class CinemaApp(QObject):
     outputs_poke = Signal()  # from the output-watch thread: X reports a change of the video outputs
+    remote_commands_poke = Signal(str)  # from the diagnosis thread: a command from the support side
 
     def __init__(self, qapp, windowed=False):
         super().__init__()
@@ -192,6 +193,8 @@ class CinemaApp(QObject):
         # HDMI sound can come without a screen change (a receiver that passes its EDID in standby and
         # its sound only once it is on): look every few seconds
         self.remote_diag = None
+        self.remote_command_log = []
+        self.remote_commands_poke.connect(self._log_remote_command, Qt.QueuedConnection)
         self._diag_report = ""
         self._diag_timer = QTimer(self)
         self._diag_timer.setInterval(3000)
@@ -291,10 +294,13 @@ class CinemaApp(QObject):
         code = code or remote_diag.new_code()
         until = until or time.time() + remote_diag.HOURS * 3600
         self._refresh_diag(check=False)
-        server = remote_diag.DiagServer(code, lambda: self._diag_report)
+        server = remote_diag.DiagServer(code, lambda: self._diag_report,
+                                        lambda: bool(self.cfg["remote_diag"].get("commands")),
+                                        self.remote_commands_poke.emit)
         server.start()
         self.remote_diag = server
-        self.cfg["remote_diag"] = {"until": until, "code": code, "firewall": firewall}
+        self.cfg["remote_diag"] = {"until": until, "code": code, "firewall": firewall,
+                                   "commands": self.cfg["remote_diag"].get("commands", False)}
         self.cfg.save()
         self._diag_timer.start()
         return code, until
@@ -305,9 +311,12 @@ class CinemaApp(QObject):
             self.remote_diag.stop()
             self.remote_diag = None
         if save:
-            self.cfg["remote_diag"] = {"until": 0, "code": "",
+            self.cfg["remote_diag"] = {"until": 0, "code": "", "commands": False,
                                        "firewall": self.cfg["remote_diag"].get("firewall", False)}
             self.cfg.save()
+
+    def _log_remote_command(self, command):
+        self.remote_command_log = (self.remote_command_log + [f"{time.strftime('%H:%M:%S')} {command}"])[-50:]
 
     def remote_diag_addresses(self):
         from .cast.server import local_ips
@@ -342,6 +351,9 @@ class CinemaApp(QObject):
         lines.append(f"  schermmeldingen volgen: {getattr(self, 'watching_outputs', False)}")
         lines.append("GELUID VOLGT HDMI")
         lines += ["  " + line for line in getattr(self, "hdmi_audio_log", [])[-15:]] or ["  (nog niets)"]
+        lines.append("COMMANDO'S OP AFSTAND " + ("(toegestaan)" if self.cfg["remote_diag"].get("commands")
+                                                  else "(niet toegestaan)"))
+        lines += ["  " + line for line in self.remote_command_log[-20:]] or ["  (geen)"]
         lines.append("MELDINGEN")
         lines += ["  " + line for line in getattr(self.control, "toast_log", [])] or ["  (geen)"]
         self._diag_report = "\n".join(lines)
