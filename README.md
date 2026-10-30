@@ -242,7 +242,9 @@ opgeslagen (admin omgeving → Beeldscherminstellingen → *Toepassen* → *Deze
 anders alle aangesloten schermen naast elkaar in hun beste resolutie. Komt een scherm later op (bv. een
 AVR die pas na het aanzetten zijn EDID doorgeeft), dan zet CinemaViewer die uitgang alsnog aan, met de
 geforceerde resolutie als die is ingesteld. **Ctrl+Alt+R** controleert de uitgangen opnieuw, deelt de
-schermen opnieuw in en haalt het menu naar voren.
+schermen opnieuw in en haalt het menu naar voren. Biedt het nieuwe HDMI-apparaat ook geluid aan, dan gaat al
+het geluid daarheen en wordt dat de geluidsuitgang (*Geluid naar het laatst aangesloten HDMI-apparaat met
+geluid*, onder Uitgangen; standaard aan).
 
 **Meer schermen dan de videokaart aankan** (Linux): het tabblad *Uitgangen* toont per uitgang de videokaart en
 hoeveel schermen elke kaart tegelijk aanstuurt. Een GT 520 heeft drie aansluitingen (VGA, DVI, HDMI) maar

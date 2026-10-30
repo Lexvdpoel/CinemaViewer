@@ -35,6 +35,7 @@ DEFAULTS = {
     "forced_outputs": [],
     # VLC audio device ("" = system default); on Linux optionally a forced card profile (HDMI)
     "audio_output": {"device": "", "card": "", "profile": ""},
+    "audio_follow_hdmi": True,  # all sound to the HDMI device that was connected last (if it takes sound)
     "lock_cursor": True,            # mouse pointer stays on the control screen
     "now_showing_on_other_screens": True,
     "preview_on_other_screens": True,

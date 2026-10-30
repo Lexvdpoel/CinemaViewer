@@ -185,6 +185,7 @@ class CinemaApp(QObject):
             pass
         self.apply_forced_outputs(retry=True)  # before the screens are laid out
         self._output_states = display.output_states()
+        self._hdmi_audio = display.available_hdmi_audio()
         display.watch_outputs(self.outputs_poke.emit)  # e.g. an AVR that only passes its EDID once it is on
         self.apply_audio_output()
         self.layout_screens()
@@ -234,7 +235,10 @@ class CinemaApp(QObject):
                  if connected and not self._output_states.get(name, (False, False))[0]]
         self._output_states = states
         if not newly:
+            # e.g. a device switched off: forget its sound, so that it counts as new when it comes back
+            QTimer.singleShot(5000, lambda: setattr(self, "_hdmi_audio", display.available_hdmi_audio()))
             return
+        QTimer.singleShot(2000, self._follow_hdmi_audio)  # its sound (ELD) shows up shortly after the picture
         try:
             display.link_graphics_cards()
         except OSError:
@@ -256,6 +260,36 @@ class CinemaApp(QObject):
             self.control.toast("Nieuw scherm op " + ", ".join(newly) + ", maar: " + "; ".join(errors), ms=10000)
         else:
             self.control.toast("Scherm gevonden op " + ", ".join(newly) + ".", error=False)
+
+    def _follow_hdmi_audio(self, attempt=0):
+        """A device was connected: when it takes sound (a new HDMI audio output became available), all
+        sound goes there and it becomes the chosen sound output."""
+        if not self.cfg.data.get("audio_follow_hdmi", True):
+            return
+        now = display.available_hdmi_audio()
+        new = {key: desc for key, desc in now.items() if key not in getattr(self, "_hdmi_audio", {})}
+        if not new:
+            if attempt < 4:
+                QTimer.singleShot((2, 3, 4, 6)[attempt] * 1000, lambda: self._follow_hdmi_audio(attempt + 1))
+            else:
+                self._hdmi_audio = now
+            return
+        self._hdmi_audio = now
+        (card, profile), desc = sorted(new.items())[-1]
+        try:
+            sink = display.force_audio_profile(card, profile)
+            if sink:
+                display.route_all_audio(sink)
+        except OSError as e:
+            self.control.toast(f"Geluid naar {desc} sturen mislukt: {e}", ms=10000)
+            return
+        self.cfg["audio_output"] = {"device": sink, "card": card, "profile": profile}
+        self.cfg.save()
+        try:
+            self.player.set_audio_device(sink)
+        except Exception:  # noqa: BLE001 - libVLC without device selection: the default sink is set
+            pass
+        self.control.toast(f"Geluid gaat nu naar {desc}.", error=False, ms=6000)
 
     def _watch_screen(self, screen):
         # A screen that only moves or changes size (cloned screens put side by side) comes as

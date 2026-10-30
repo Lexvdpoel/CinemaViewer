@@ -498,6 +498,13 @@ class SettingsDialog(FramelessDialog):
             idx = self.cb_audio.count() - 1
         self.cb_audio.setCurrentIndex(idx)
         form.addRow("Geluidsuitgang", self.cb_audio)
+        self.chk_follow_hdmi = QCheckBox("Geluid naar het laatst aangesloten HDMI-apparaat met geluid")
+        self.chk_follow_hdmi.setChecked(self.data.get("audio_follow_hdmi", True))
+        self.chk_follow_hdmi.setToolTip(
+            "Komt er een HDMI-apparaat met geluid bij (bv. de AVR die opstart), dan gaat al het geluid daarheen "
+            "en wordt dat de geluidsuitgang hierboven")
+        if os.name != "nt":
+            form.addRow("", self.chk_follow_hdmi)
         form.addRow("", _status(
             "Het geluid van films gaat naar deze uitgang, los van de standaarduitgang van het systeem. "
             + ("‘HDMI forceren’ zet onder Linux het HDMI-profiel van de geluidskaart aan, ook als het systeem "
@@ -1747,6 +1754,7 @@ class SettingsDialog(FramelessDialog):
             self.tabs.setCurrentIndex(1)
             return
         d["audio_output"] = dict(self.cb_audio.currentData())
+        d["audio_follow_hdmi"] = self.chk_follow_hdmi.isChecked()
         new_pw = self.pw_new.text()
         if new_pw or self.pw_repeat.text():
             problem = ""

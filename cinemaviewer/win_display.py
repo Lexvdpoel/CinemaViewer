@@ -152,6 +152,14 @@ def restore_desktop_layout(force=False):
     return ""  # Windows keeps its own layout
 
 
+def available_hdmi_audio():
+    return {}  # Windows switches to a new HDMI audio device itself when it is the default
+
+
+def route_all_audio(sink):
+    pass
+
+
 def output_states():
     return {}
 

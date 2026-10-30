@@ -433,6 +433,16 @@ def open_display_settings():
 def hdmi_audio_profiles():
     """HDMI/DisplayPort profiles of the sound cards, also those marked unavailable (no ELD from
     the extender): [(card, profile, description)]."""
+    return [(card, profile, desc) for card, profile, desc, _available in _hdmi_profiles()]
+
+
+def available_hdmi_audio():
+    """{(card, profile): description} of the HDMI/DisplayPort outputs where a device that takes sound is
+    connected right now (it passed its ELD: a receiver, TV or projector with audio)."""
+    return {(card, profile): desc for card, profile, desc, available in _hdmi_profiles() if available}
+
+
+def _hdmi_profiles():
     if not shutil.which("pactl"):
         return []
     try:
@@ -455,10 +465,23 @@ def hdmi_audio_profiles():
             name = rest.rsplit(" (sinks:", 1)[0]
             if profile.startswith("output:") and "+input" not in profile and \
                     ("hdmi" in profile or "displayport" in profile.lower()):
-                out.append((card, profile, f"{desc or card} – {name}"))
+                out.append((card, profile, f"{desc or card} – {name}", "available: no" not in rest))
         elif in_profiles and not line.startswith("\t\t"):
             in_profiles = False
     return out
+
+
+def route_all_audio(sink):
+    """Make the sink the system's default and move everything that plays now (browser, music analysis,
+    other programs) to it."""
+    _run(["pactl", "set-default-sink", sink])
+    for line in _run(["pactl", "list", "short", "sink-inputs"]).splitlines():
+        stream = line.split("\t", 1)[0].strip()
+        if stream.isdigit():
+            try:
+                _run(["pactl", "move-sink-input", stream, sink])
+            except OSError:
+                pass  # a stream that just ended
 
 
 def force_audio_profile(card, profile):
