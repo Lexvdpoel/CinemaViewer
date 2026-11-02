@@ -89,8 +89,9 @@ class Player(QObject):
         else:
             self.mp.set_xwindow(int(hwnd))
 
-    def play(self, mrl, start_ms=0, options=()):
-        """options: extra VLC media options (later ones win, e.g. a source's own user agent)."""
+    def play(self, mrl, start_ms=0, options=(), subtitles=()):
+        """options: extra VLC media options (later ones win, e.g. a source's own user agent).
+        subtitles: addresses of external subtitle files, offered like an .srt next to a local file."""
         media = self.instance.media_new(mrl)
         if start_ms > 0:
             media.add_option(f":start-time={start_ms / 1000:.1f}")
@@ -101,6 +102,12 @@ class Player(QObject):
         media.add_option(f":http-user-agent={USER_AGENT}")
         for option in options:
             media.add_option(option)
+        for url in subtitles:
+            try:
+                # priority below 4: chosen like an autodetected .srt, not forced on as a user's choice
+                media.slaves_add(vlc.MediaSlaveType.subtitle, 3, url)
+            except Exception:  # noqa: BLE001 - older libVLC: no slaves
+                break
         self.mp.set_media(media)
         if self.audio_device:
             self.mp.audio_output_device_set(None, self.audio_device)

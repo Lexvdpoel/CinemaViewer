@@ -98,6 +98,7 @@ class CinemaApp(QObject):
         self._history = deque(maxlen=100)  # titles started, newest last (the current one included)
         self._queue_failures = 0
         self._mrl = None
+        self._subtitles = ()
         self._pos = 0
         self._len = 0
         self._reported_start = False
@@ -447,7 +448,7 @@ class CinemaApp(QObject):
 
         resume = None
         if self.current is not None and self.player.state in ("playing", "paused", "opening"):
-            resume = (self._mrl, self.player.position, self.current.extra.get("vlc_options", ()))
+            resume = (self._mrl, self.player.position, self.current.extra.get("vlc_options", ()), self._subtitles)
             self.player.stop()
         self._update_mirror(False)
         if self.browser_streaming:
@@ -1015,9 +1016,18 @@ class CinemaApp(QObject):
 
         def prepare(it):
             mrl = src.play_url(it)
-            return mrl, (self.loudness.measure(it, mrl, wait=START_MEASURE_WAIT) if self._even_volume(it) else None)
+            lufs = self.loudness.measure(it, mrl, wait=START_MEASURE_WAIT) if self._even_volume(it) else None
+            return mrl, lufs, self._subtitle_urls(src, it)
 
-        run_async(prepare, lambda r: self._start(item, r[0], start, r[1]), failed, item)
+        run_async(prepare, lambda r: self._start(item, r[0], start, r[1], r[2]), failed, item)
+
+    @staticmethod
+    def _subtitle_urls(src, item):
+        """External subtitles on the server (Jellyfin/Plex): not in the stream, so VLC gets them separately."""
+        try:
+            return [s["url"] for s in src.subtitle_files(item)] if hasattr(src, "subtitle_files") else []
+        except Exception:  # noqa: BLE001 - playing goes on without them
+            return []
 
     def _even_volume(self, item):
         return self.cfg.data.get("even_volume", True) and Loudness.applies(item)
@@ -1037,7 +1047,7 @@ class CinemaApp(QObject):
             return
         run_async(lambda it: self.loudness.measure(it, src.play_url(it)), None, None, nxt)
 
-    def _start(self, item, mrl, start_ms, lufs=None):
+    def _start(self, item, mrl, start_ms, lufs=None, subtitles=()):
         self.stop_browser_stream()
         if self.presentation is not None:
             self.close_presentation(sync=False)
@@ -1045,6 +1055,7 @@ class CinemaApp(QObject):
             self._report("stop", self.current, self._pos)
         self.current = item
         self._mrl = mrl
+        self._subtitles = subtitles
         self._history.append(item)
         self._shuffle_started(item)
         self._pos = start_ms
@@ -1064,7 +1075,7 @@ class CinemaApp(QObject):
         self._audio_meta = {}
         self._meta_tries = 0
         self.player.set_gain_db(gain_db(lufs) if lufs is not None else 0.0)
-        self.player.play(mrl, start_ms, item.extra.get("vlc_options", ()))
+        self.player.play(mrl, start_ms, item.extra.get("vlc_options", ()), subtitles)
         if lufs is None and self._even_volume(item) and Loudness.can_measure(mrl):
             self._measure_late(item, mrl)
         self._measure_next()

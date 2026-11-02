@@ -266,7 +266,27 @@ def _fetch(url, dest):
         dest.unlink(missing_ok=True)
 
 
-def _meta(item):
+def _fetch_subtitles(src, item, media):
+    """External subtitles from the server next to the media file as media.<taal>[.forced].<ext>:
+    VLC loads files that start with the media's name by itself."""
+    try:
+        subs = src.subtitle_files(item) if hasattr(src, "subtitle_files") else []
+    except Exception:  # noqa: BLE001 - the film itself is there; subtitles are a bonus
+        return
+    used = set()
+    for sub in subs:
+        parts = [media.stem]
+        if sub.get("lang"):
+            parts.append(_safe(sub["lang"], "")[:10])
+        if sub.get("forced"):
+            parts.append("forced")
+        name = ".".join(parts)
+        n = 2
+        while name in used:  # two subtitles in the same language
+            name = ".".join(parts + [str(n)])
+            n += 1
+        used.add(name)
+        _fetch(sub["url"], media.with_name(f"{name}.{sub['ext']}"))
     extra = item.extra
     return {
         "source": item.source, "source_id": item.id, "title": item.title, "kind": item.kind,
@@ -312,6 +332,7 @@ def download(src, item, on_progress=None, cancel=None):
                         on_progress(done, total)
             if total and done != total:
                 raise OSError(f"verbinding afgebroken na {done // 1048576} van {total // 1048576} MB")
+        _fetch_subtitles(src, item, tmp / f"media{suffix}")
         _fetch(item.image_url, tmp / "poster.jpg")
         _fetch(item.backdrop_url, tmp / "backdrop.jpg")
         return _store(tmp, meta, item.extra.get("series_image"))

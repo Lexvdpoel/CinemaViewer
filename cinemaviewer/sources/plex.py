@@ -6,6 +6,9 @@ from ..models import MediaItem
 
 KIND_MAP = {"movie": "movie", "episode": "episode", "show": "series", "season": "season", "clip": "video",
             "artist": "artist", "album": "album", "track": "track", "playlist": "playlist"}
+# external subtitles VLC reads as text (image subtitles like vobsub are two files: not supported)
+SUBTITLE_CODECS = {"srt": "srt", "subrip": "srt", "ass": "ass", "ssa": "ssa", "vtt": "vtt", "webvtt": "vtt",
+                   "smi": "smi"}
 
 
 class PlexSource:
@@ -133,6 +136,24 @@ class PlexSource:
             meta = self._get(f"/library/metadata/{item.id}").get("Metadata", [{}])[0]
             part_key = meta["Media"][0]["Part"][0]["key"]
         return f"{self.url}{part_key}?X-Plex-Token={self.token}"
+
+    def subtitle_files(self, item):
+        """External subtitles (an .srt next to the film, or one Plex downloaded itself): they are not in the
+        part file. [{'url', 'lang', 'forced', 'ext'}]; embedded ones come along with the file anyway."""
+        if item.kind == "track":
+            return []
+        meta = (self._get(f"/library/metadata/{item.id}").get("Metadata") or [{}])[0]
+        media = meta.get("Media") or [{}]
+        parts = media[0].get("Part") or [{}]  # the part play_url streams
+        out = []
+        for s in parts[0].get("Stream") or []:
+            codec = (s.get("codec") or "").lower()
+            if s.get("streamType") != 3 or not s.get("key") or codec not in SUBTITLE_CODECS:
+                continue
+            out.append({"url": f"{self.url}{s['key']}?X-Plex-Token={self.token}",
+                        "lang": s.get("languageCode") or "", "forced": bool(s.get("forced")),
+                        "ext": SUBTITLE_CODECS[codec]})
+        return out
 
     def _timeline(self, item, state, pos_ms):
         params = {

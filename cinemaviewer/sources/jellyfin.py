@@ -7,6 +7,7 @@ from ..models import MediaItem
 TICKS_PER_MS = 10_000
 FIELDS = "Overview,Genres,ProductionYear,OfficialRating,CommunityRating,RunTimeTicks,ChildCount"
 SKIP_COLLECTIONS = {"books", "photos", "livetv"}
+SUBTITLE_FORMATS = {"subrip": "srt", "srt": "srt", "ass": "ass", "ssa": "ssa", "webvtt": "vtt", "vtt": "vtt"}
 
 KIND_MAP = {
     "Movie": "movie",
@@ -195,6 +196,26 @@ class JellyfinSource:
     def play_url(self, item):
         endpoint = "Audio" if item.kind == "track" else "Videos"
         return f"{self.url}/{endpoint}/{item.id}/stream?static=true&api_key={self.token}"
+
+    def subtitle_files(self, item):
+        """External subtitles (an .srt next to the film on the server): they are not in the stream itself.
+        [{'url', 'lang', 'forced', 'ext'}]; embedded ones come along with the file anyway."""
+        if item.kind == "track":
+            return []
+        d = self._get(f"/Users/{self.user_id}/Items/{item.id}")
+        out = []
+        for source in d.get("MediaSources") or []:
+            for s in source.get("MediaStreams") or []:
+                if s.get("Type") != "Subtitle" or not s.get("IsExternal") or not s.get("IsTextSubtitleStream"):
+                    continue
+                ext = SUBTITLE_FORMATS.get((s.get("Codec") or "").lower(), "srt")  # others: converted to srt
+                out.append({
+                    "url": f"{self.url}/Videos/{item.id}/{source['Id']}/Subtitles/{s['Index']}/0/Stream.{ext}"
+                           f"?api_key={self.token}",
+                    "lang": s.get("Language") or "", "forced": bool(s.get("IsForced")), "ext": ext,
+                })
+            break  # the first version is the one play_url streams
+        return out
 
     def report_start(self, item, pos_ms):
         self._post("/Sessions/Playing", {
