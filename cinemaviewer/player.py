@@ -22,6 +22,9 @@ import vlc  # noqa: E402
 from PySide6.QtCore import QObject, QTimer, Signal
 
 from .net import USER_AGENT
+from .subtitles import choose as choose_subtitle
+
+PICK_SUBTITLE_S = 4  # seconds of playing in which the subtitle is chosen (files and tracks appear late)
 
 _STATES = {
     vlc.State.NothingSpecial: "idle",
@@ -76,6 +79,8 @@ class Player(QObject):
         self.fixed_output = False  # True: VLC at full level, the receiver does the volume
         self.audio_device = ""     # VLC audio output device id; "" = system default
         self._grace_until = 0.0
+        self._pick_subtitles = False  # still choosing the subtitle of the film that just started
+        self._pick_until = None
         self._track_cache = (None, {})
         self._timer = QTimer(self)
         self._timer.setInterval(200)
@@ -89,9 +94,10 @@ class Player(QObject):
         else:
             self.mp.set_xwindow(int(hwnd))
 
-    def play(self, mrl, start_ms=0, options=(), subtitles=()):
+    def play(self, mrl, start_ms=0, options=(), subtitles=(), auto_subtitles=False):
         """options: extra VLC media options (later ones win, e.g. a source's own user agent).
-        subtitles: addresses of external subtitle files, offered like an .srt next to a local file."""
+        subtitles: addresses of external subtitle files, offered like an .srt next to a local file.
+        auto_subtitles: Dutch subtitles on, else English, else none (see subtitles.choose)."""
         media = self.instance.media_new(mrl)
         if start_ms > 0:
             media.add_option(f":start-time={start_ms / 1000:.1f}")
@@ -112,6 +118,8 @@ class Player(QObject):
         if self.audio_device:
             self.mp.audio_output_device_set(None, self.audio_device)
         self._grace_until = time.monotonic() + 2.0
+        self._pick_subtitles = auto_subtitles
+        self._pick_until = None
         self._set_state("opening")
         self.mp.play()
 
@@ -218,7 +226,20 @@ class Player(QObject):
         return self.mp.video_get_spu()
 
     def set_subtitle_track(self, track_id):
+        self._pick_subtitles = False  # chosen by hand: leave it
         self.mp.video_set_spu(track_id)
+
+    def _choose_subtitle(self):
+        """The first seconds of a film: subtitle files and tracks show up one by one, so look again each
+        poll and switch to the best one (Dutch, English, none)."""
+        now = time.monotonic()
+        if self._pick_until is None:
+            self._pick_until = now + PICK_SUBTITLE_S
+        best = choose_subtitle(self.subtitle_tracks())
+        if best != self.mp.video_get_spu():
+            self.mp.video_set_spu(best)
+        if now >= self._pick_until:
+            self._pick_subtitles = False
 
     # -- disc navigation ------------------------------------------------------
     def navigate(self, action):
@@ -340,6 +361,8 @@ class Player(QObject):
         self._set_state(state)
         if state in ("playing", "paused"):
             self.tick.emit(self.position, self.length)
+        if state == "playing" and self._pick_subtitles:
+            self._choose_subtitle()
 
     def shutdown(self):
         self._timer.stop()

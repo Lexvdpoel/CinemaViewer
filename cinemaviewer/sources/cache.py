@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from .. import subtitles
 from ..config import CACHE_DIR
 from ..models import SOURCE_LABELS, MediaItem, fmt_size
 from ..net import SSL_CONTEXT, USER_AGENT
@@ -267,26 +268,57 @@ def _fetch(url, dest):
 
 
 def _fetch_subtitles(src, item, media):
-    """External subtitles from the server next to the media file as media.<taal>[.forced].<ext>:
-    VLC loads files that start with the media's name by itself."""
+    """External subtitles from the server next to the media file (media.Nederlands.srt, ...):
+    VLC loads files that start with the media's name by itself. Returns their names."""
+    return [p.name for p in subtitles.save(subtitles.subtitle_files(src, item), media.parent, media.stem)]
+
+
+def origin(item):
+    """'plex' or 'jellyfin' when this bibliotheek item (or the server item it came from) was downloaded from
+    there, else ''."""
+    folder = folder_for(item)
+    data = (_read_meta(folder) or {}) if folder is not None else {}
+    return data.get("source", "") if data.get("source") in ("plex", "jellyfin") else ""
+
+
+def sync_subtitles(src, item):
+    """Bring the external subtitles of a downloaded item in line with the server it came from (src): new
+    ones are added, changed ones replaced, ones gone from the server removed. Subtitle files someone put in
+    the folder by hand are left alone. Returns {'added', 'changed', 'removed', 'total'}."""
+    folder = folder_for(item)
+    data = _read_meta(folder) if folder is not None else None
+    media = _media_files(folder) if data else []
+    if not media or data.get("source") != src.key:
+        raise OSError("dit item komt niet van deze bron")
+    server_item = MediaItem(source=data["source"], id=str(data["source_id"]), title=data.get("title", ""),
+                            kind=data.get("kind", "video"))
+    subs = src.subtitle_files(server_item)  # a connection error goes to the caller: nothing is changed
+    tmp = folder / ".tmp-ondertitels"
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir()
     try:
-        subs = src.subtitle_files(item) if hasattr(src, "subtitle_files") else []
-    except Exception:  # noqa: BLE001 - the film itself is there; subtitles are a bonus
-        return
-    used = set()
-    for sub in subs:
-        parts = [media.stem]
-        if sub.get("lang"):
-            parts.append(_safe(sub["lang"], "")[:10])
-        if sub.get("forced"):
-            parts.append("forced")
-        name = ".".join(parts)
-        n = 2
-        while name in used:  # two subtitles in the same language
-            name = ".".join(parts + [str(n)])
-            n += 1
-        used.add(name)
-        _fetch(sub["url"], media.with_name(f"{name}.{sub['ext']}"))
+        fetched = subtitles.save(subs, tmp, media[0].stem)
+        if len(fetched) < len(subs):
+            raise OSError("niet alle ondertitels konden worden opgehaald")
+        old = set(data.get("subtitle_files") or [])
+        new = {p.name for p in fetched}
+        changed = 0
+        for p in fetched:
+            target = folder / p.name
+            if p.name in old and target.is_file() and target.read_bytes() == p.read_bytes():
+                continue
+            changed += p.name in old
+            p.replace(target)
+        for name in old - new:
+            (folder / name).unlink(missing_ok=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    data["subtitle_files"] = sorted(new)
+    (folder / META).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"added": len(new - old), "changed": changed, "removed": len(old - new), "total": len(new)}
+
+
+def _meta(item):
     extra = item.extra
     return {
         "source": item.source, "source_id": item.id, "title": item.title, "kind": item.kind,
@@ -332,7 +364,7 @@ def download(src, item, on_progress=None, cancel=None):
                         on_progress(done, total)
             if total and done != total:
                 raise OSError(f"verbinding afgebroken na {done // 1048576} van {total // 1048576} MB")
-        _fetch_subtitles(src, item, tmp / f"media{suffix}")
+        meta["subtitle_files"] = _fetch_subtitles(src, item, tmp / f"media{suffix}")
         _fetch(item.image_url, tmp / "poster.jpg")
         _fetch(item.backdrop_url, tmp / "backdrop.jpg")
         return _store(tmp, meta, item.extra.get("series_image"))

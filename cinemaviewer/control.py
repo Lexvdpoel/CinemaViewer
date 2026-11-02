@@ -353,13 +353,20 @@ class DetailsPanel(QWidget):
         self.btn_uncache.setIcon(glyph_icon(G_DELETE, TEXT, 16))
         self.btn_uncache.setMinimumHeight(46)
         self.btn_uncache.setCursor(Qt.PointingHandCursor)
+        self.btn_subsync = QPushButton("  Ondertitels bijwerken")
+        self.btn_subsync.setIcon(glyph_icon(G_CC, TEXT, 16))
+        self.btn_subsync.setMinimumHeight(46)
+        self.btn_subsync.setCursor(Qt.PointingHandCursor)
+        self.btn_subsync.setToolTip("Nieuwe of andere ondertitels ophalen van de Plex/Jellyfin-server waar dit "
+                                    "item vandaan komt")
+        self._subsync_item = None  # being synchronised
         self.chk_auto = QCheckBox("Pauze halverwege inplannen (vóór de aftiteling gerekend)")
         self.chk_auto.setChecked(app.cfg["auto_intermission"])
         self.chk_auto.setFocusPolicy(Qt.NoFocus)
         self.chk_auto.toggled.connect(app.set_auto_intermission)
         body.addWidget(self.chk_auto)
         for b in (self.btn_present, self.btn_play_all, self.btn_resume, self.btn_play, self.btn_queue, self.btn_cache,
-                  self.btn_cancel, self.btn_uncache, self.btn_open):
+                  self.btn_cancel, self.btn_uncache, self.btn_subsync, self.btn_open):
             b.setFocusPolicy(Qt.NoFocus)
             body.addWidget(b)
         body.addStretch()
@@ -374,6 +381,7 @@ class DetailsPanel(QWidget):
         self.btn_present.clicked.connect(lambda: self.item and app.open_presentation(self.item))
         self.btn_cache.clicked.connect(self._on_cache)
         self.btn_uncache.clicked.connect(self._on_uncache)
+        self.btn_subsync.clicked.connect(self._on_subsync)
         self.btn_cancel.clicked.connect(self._on_cancel)
         self.cache_progress.connect(self._on_cache_progress)
 
@@ -407,6 +415,41 @@ class DetailsPanel(QWidget):
             self._set_cache_state()
         else:
             self.btn_uncache.setVisible(item.source == "cache" and item.playable)
+            self._set_subsync_state()
+
+    def _set_subsync_state(self):
+        item = self.item
+        show = item is not None and item.playable and self.app.cache_subtitle_source(item) is not None
+        self.btn_subsync.setVisible(show)
+        busy = self._subsync_item is not None
+        self.btn_subsync.setEnabled(not busy)
+        self.btn_subsync.setText("  Ondertitels ophalen…" if busy else "  Ondertitels bijwerken")
+
+    def _on_subsync(self):
+        item = self.item
+        if item is None or self._subsync_item is not None:
+            return
+        self._subsync_item = item
+        self._set_subsync_state()
+        self.app.cache_sync_subtitles(item, lambda r: self._subsync_done(item, r),
+                                      lambda e: self._subsync_done(item, None, e))
+
+    def _subsync_done(self, item, result, err=None):
+        self._subsync_item = None
+        if self.item is not None:
+            self._set_subsync_state()
+        if result is None:
+            self.app.control.toast(f"Ondertitels van ‘{item.title}’ bijwerken mislukt: {err}", ms=8000)
+            return
+        parts = [f"{result[key]} {word}" for key, word in
+                 (("added", "nieuw"), ("changed", "bijgewerkt"), ("removed", "verwijderd")) if result[key]]
+        if parts:
+            text = f"Ondertitels van ‘{item.title}’ bijgewerkt: {', '.join(parts)}."
+        elif result["total"]:
+            text = f"De ondertitels van ‘{item.title}’ waren al bij ({result['total']})."
+        else:
+            text = f"De server heeft geen losse ondertitels voor ‘{item.title}’."
+        self.app.control.toast(text, error=False, ms=6000)
 
     @staticmethod
     def _can_cache(item):
@@ -443,6 +486,7 @@ class DetailsPanel(QWidget):
         self.btn_cancel.setVisible(busy)
         self.btn_cancel.setEnabled(busy and not self._cancel.is_set())
         self.btn_uncache.setVisible(cached)
+        self._set_subsync_state()
 
     def _on_uncache(self):
         item = self.item

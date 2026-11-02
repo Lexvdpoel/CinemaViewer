@@ -16,7 +16,7 @@ from PySide6.QtCore import QObject, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QGuiApplication, QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog
 
-from . import __version__, display, remote_diag, shares, updater, wallpaper
+from . import __version__, display, remote_diag, shares, subtitles, updater, wallpaper
 from .config import Config
 from .dialogs import ask, message
 from .control import ControlWindow
@@ -448,7 +448,8 @@ class CinemaApp(QObject):
 
         resume = None
         if self.current is not None and self.player.state in ("playing", "paused", "opening"):
-            resume = (self._mrl, self.player.position, self.current.extra.get("vlc_options", ()), self._subtitles)
+            resume = (self._mrl, self.player.position, self.current.extra.get("vlc_options", ()), self._subtitles,
+                      self._auto_subtitles(self.current))
             self.player.stop()
         self._update_mirror(False)
         if self.browser_streaming:
@@ -713,6 +714,23 @@ class CinemaApp(QObject):
             on_done(folder)
 
         run_async(work, done, on_error)
+
+    def cache_subtitle_source(self, item):
+        """The Plex/Jellyfin source a downloaded item came from, when it is set up here (else None)."""
+        if item.kind in AUDIO_KINDS or not (item.source == "cache" or self.is_cached(item)):
+            return None
+        return self.sources.get(cache_source.origin(item))
+
+    def cache_sync_subtitles(self, item, on_done, on_error):
+        """Fetch the subtitles of a downloaded item again from its server (new, changed or removed ones)."""
+        src = self.cache_subtitle_source(item)
+        if src is None:
+            on_error("de bron waar dit item vandaan komt is niet ingesteld")
+            return
+        if self._cache_in_use(item):
+            on_error("hij speelt nu; stop het afspelen eerst")
+            return
+        run_async(cache_source.sync_subtitles, on_done, on_error, src, item)
 
     def cache_import(self, item, info, on_progress, on_done, on_error, cancel=None):
         """Copy a local file / unprotected disc into the bibliotheek, filed as info says."""
@@ -1017,17 +1035,14 @@ class CinemaApp(QObject):
         def prepare(it):
             mrl = src.play_url(it)
             lufs = self.loudness.measure(it, mrl, wait=START_MEASURE_WAIT) if self._even_volume(it) else None
-            return mrl, lufs, self._subtitle_urls(src, it)
+            return mrl, lufs, subtitles.for_streaming(src, it)
 
         run_async(prepare, lambda r: self._start(item, r[0], start, r[1], r[2]), failed, item)
 
     @staticmethod
-    def _subtitle_urls(src, item):
-        """External subtitles on the server (Jellyfin/Plex): not in the stream, so VLC gets them separately."""
-        try:
-            return [s["url"] for s in src.subtitle_files(item)] if hasattr(src, "subtitle_files") else []
-        except Exception:  # noqa: BLE001 - playing goes on without them
-            return []
+    def _auto_subtitles(item):
+        """Choose Dutch/English/off at the start; not for music or discs (their menu chooses)."""
+        return item.kind not in AUDIO_KINDS + ("dvd", "bluray")
 
     def _even_volume(self, item):
         return self.cfg.data.get("even_volume", True) and Loudness.applies(item)
@@ -1047,7 +1062,7 @@ class CinemaApp(QObject):
             return
         run_async(lambda it: self.loudness.measure(it, src.play_url(it)), None, None, nxt)
 
-    def _start(self, item, mrl, start_ms, lufs=None, subtitles=()):
+    def _start(self, item, mrl, start_ms, lufs=None, sub_files=()):
         self.stop_browser_stream()
         if self.presentation is not None:
             self.close_presentation(sync=False)
@@ -1055,7 +1070,7 @@ class CinemaApp(QObject):
             self._report("stop", self.current, self._pos)
         self.current = item
         self._mrl = mrl
-        self._subtitles = subtitles
+        self._subtitles = sub_files
         self._history.append(item)
         self._shuffle_started(item)
         self._pos = start_ms
@@ -1075,7 +1090,7 @@ class CinemaApp(QObject):
         self._audio_meta = {}
         self._meta_tries = 0
         self.player.set_gain_db(gain_db(lufs) if lufs is not None else 0.0)
-        self.player.play(mrl, start_ms, item.extra.get("vlc_options", ()), subtitles)
+        self.player.play(mrl, start_ms, item.extra.get("vlc_options", ()), sub_files, self._auto_subtitles(item))
         if lufs is None and self._even_volume(item) and Loudness.can_measure(mrl):
             self._measure_late(item, mrl)
         self._measure_next()
