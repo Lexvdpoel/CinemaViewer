@@ -46,7 +46,17 @@ _LINUX_COMMANDS = [
     ("journal (deze sessie)", ["journalctl", "--user", "-b", "-n", "150", "--no-pager"]),
     ("ip -4 addr", ["ip", "-4", "addr"]),
     ("kernel", ["uname", "-a"]),
-    ("modules (geluid/video)", ["sh", "-c", "lsmod | grep -E 'snd_hda|nouveau|i915|snd_sof' | sort"]),
+    ("modules (geluid/video)", ["sh", "-c", "lsmod | grep -E 'snd_hda|nouveau|i915|radeon|amdgpu|snd_sof' | sort"]),
+    # tearing / software rendering: which X driver, whether 3D acceleration works, firmware errors
+    ("kernel: videokaart/firmware", ["sh", "-c", "journalctl -k -b --no-pager | grep -iE 'radeon|amdgpu|drm|firmware|"
+                                                 "\\[TTM\\]' | tail -n 60"]),
+    ("Xorg-log (driver, versnelling)", ["sh", "-c", "f=$(ls -t ~/.local/share/xorg/Xorg.*.log /var/log/Xorg.*.log "
+                                                    "2>/dev/null | head -n1); echo \"$f\"; [ -n \"$f\" ] && grep -E "
+                                                    "'\\(EE\\)|\\(WW\\)|LoadModule|Loading .*drv|glamor|DRI|AIGLX|"
+                                                    "TearFree|Acceleration|modeset\\(|RADEON\\(|AMDGPU\\(' \"$f\" "
+                                                    "| tail -n 80"]),
+    ("OpenGL-renderer", ["sh", "-c", "glxinfo -B 2>&1 || echo '(glxinfo ontbreekt: sudo apt install mesa-utils)'"]),
+    ("hardware-decodering", ["sh", "-c", "vainfo 2>&1 | tail -n 20; vdpauinfo 2>&1 | head -n 25"]),
     ("hda-modulen opties", ["sh", "-c", "for m in snd_hda_intel snd_hda_codec_hdmi snd_hda_codec_nvhdmi; do "
                                        "for p in /sys/module/$m/parameters/*; do [ -r \"$p\" ] && "
                                        "echo \"$m.$(basename $p)=$(cat $p 2>/dev/null)\"; done; done"]),
