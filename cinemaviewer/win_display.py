@@ -190,6 +190,26 @@ def refresh_output(name):
     pass
 
 
+def enable_tearfree():
+    return []  # Windows composites with vsync itself (DWM)
+
+
+def renderer():
+    return False, "Windows (DWM)"
+
+
+def start_vsync_compositor():
+    return "niet nodig"
+
+
+def stop_vsync_compositor():
+    pass
+
+
+def compositor_running():
+    return False
+
+
 def card_capacity():
     return {}  # Windows lists only the outputs it can drive
 

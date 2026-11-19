@@ -102,6 +102,8 @@ def start_desktop(timeout=20):
     session (settings daemon, panels, desktop icons), so the session does not end with us."""
     if explorer_running():
         return True
+    from .linux_display import stop_vsync_compositor
+    stop_vsync_compositor()  # Cinnamon's window manager composites itself; two compositors cannot share a screen
     session = shutil.which("cinnamon-session-cinnamon")
     if session and os.environ.get("DESKTOP_SESSION") == SESSION_FILE.stem:
         os.environ.update(XDG_CURRENT_DESKTOP="X-Cinnamon", XDG_SESSION_DESKTOP="cinnamon",

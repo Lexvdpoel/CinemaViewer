@@ -189,6 +189,7 @@ class CinemaApp(QObject):
         except OSError:
             pass
         self.apply_forced_outputs(retry=True)  # before the screens are laid out
+        self._smooth_video(at_start=True)
         self._output_states = display.output_states()
         self._hdmi_audio = display.available_hdmi_audio()
         self.watching_outputs = display.watch_outputs(self.outputs_poke.emit)
@@ -281,11 +282,34 @@ class CinemaApp(QObject):
             pass
         errors = self.apply_forced_outputs(quiet=True)
         self._follow_preferred_modes()
+        self._smooth_video()  # a newly switched-on output starts with the driver default
         self._output_states = display.output_states()
         if errors:
             self.control.toast("Nieuw scherm op " + ", ".join(newly) + ", maar: " + "; ".join(errors), ms=10000)
         else:
             self.control.toast("Scherm gevonden op " + ", ".join(newly) + ".", error=False)
+
+    def _output_log(self, line):
+        self.output_log = (getattr(self, "output_log", []) + [f"{time.strftime('%H:%M:%S')} {line}"])[-20:]
+
+    def _smooth_video(self, at_start=False):
+        """No tear line in fast pans: the video card syncs to the screen refresh (Radeon TearFree); when the
+        picture is made on the processor, a compositor in the kiosk session times it to the refresh."""
+        try:
+            for line in display.enable_tearfree():
+                self._output_log(line)
+        except OSError as e:
+            self._output_log(f"TearFree mislukt: {e}")
+        if not at_start or sys.platform == "win32" or os.environ.get("DESKTOP_SESSION") != "cinemaviewer":
+            return
+        software, name = display.renderer()
+        if not software:
+            return
+        try:
+            self._output_log(f"beeld op de processor ({name}): vsync-compositor {display.start_vsync_compositor()}")
+        except OSError as e:
+            self._output_log(f"beeld op de processor ({name}), geen vsync: {e}")
+        self.qapp.aboutToQuit.connect(display.stop_vsync_compositor)
 
     def _follow_preferred_modes(self):
         """A device behind an output changed (e.g. the projector came up behind the receiver): use the mode it
@@ -295,7 +319,7 @@ class CinemaApp(QObject):
         except OSError as e:
             changed = [f"mislukt: {e}"]
         for line in changed:
-            self.output_log = (getattr(self, "output_log", []) + [f"{time.strftime('%H:%M:%S')} {line}"])[-20:]
+            self._output_log(line)
 
     # -- diagnosis from a distance -------------------------------------------------
     def remote_diag_start(self, code=None, until=None):

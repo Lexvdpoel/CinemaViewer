@@ -395,11 +395,96 @@ def refresh_output(name):
     _run(["xrandr", "--output", name, "--off"])
 
 
+# -- picture without tear lines --------------------------------------------------------
+# Without vsync a new frame reaches the screen while it is still being drawn: a fast pan shows one
+# horizontal tear line. Radeon/amdgpu sync in their X driver ('TearFree'); without a working video card
+# driver (rendering on the processor) a compositor that waits for the screen refresh is the only way.
+_SOFTWARE_RENDERERS = re.compile(r"llvmpipe|softpipe|swrast|software rasterizer", re.I)
+_compositor = None
+
+
+def enable_tearfree():
+    """Switch the Radeon/amdgpu 'TearFree' output property on (an xrandr property: no administrator rights
+    needed; the driver default 'auto' only syncs rotated screens). Returns ['HDMI-0: TearFree auto -> on']."""
+    _check_x11()
+    text = _run(["xrandr", "--current", "--props"])
+    name, done = None, []
+    for line in text.splitlines():
+        m = _OUTPUT_RE.match(line)
+        if m:
+            name = m.group(1) if m.group(4) is not None else None  # only outputs that show something
+            continue
+        prop = line.strip()
+        if name and prop.startswith("TearFree:"):
+            value = (prop.split(":", 1)[1].split() or ["?"])[0]
+            if value != "on":
+                _run(["xrandr", "--output", name, "--set", "TearFree", "on"])
+                done.append(f"{name}: TearFree {value} -> on")
+    return done
+
+
+def renderer():
+    """(software, description): whether OpenGL runs on the processor instead of the video card."""
+    glxinfo = shutil.which("glxinfo")
+    if not glxinfo:
+        return False, "onbekend (glxinfo ontbreekt)"
+    try:
+        out = _run([glxinfo, "-B"], timeout=10)
+    except OSError as e:
+        return True, f"geen OpenGL ({e})"  # no GLX at all: certainly no accelerated video card driver
+    m = re.search(r"OpenGL renderer string: (.*)", out)
+    name = m.group(1).strip() if m else "onbekend"
+    return bool(_SOFTWARE_RENDERERS.search(name)), name
+
+
+def start_vsync_compositor():
+    """Rendering on the processor: picom (xrender backend, also on the processor) puts every screen update
+    on screen timed to the refresh through the X Present extension; the nearest thing to vsync without a
+    video card driver. Only for the kiosk session: on the desktop Cinnamon composites itself."""
+    global _compositor
+    if _compositor and _compositor.poll() is None:
+        return "draait al"
+    picom = shutil.which("picom")
+    if not picom:
+        raise OSError("picom ontbreekt (sudo apt install picom)")
+    _compositor = subprocess.Popen([picom, "--backend", "xrender", "--vsync", "--no-fading-openclose"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return "gestart"
+
+
+def stop_vsync_compositor():
+    """Before Cinnamon starts: two compositors cannot share a screen."""
+    global _compositor
+    if _compositor and _compositor.poll() is None:
+        _compositor.terminate()
+        try:
+            _compositor.wait(5)
+        except subprocess.TimeoutExpired:
+            _compositor.kill()
+    _compositor = None
+
+
+def compositor_running():
+    return bool(_compositor and _compositor.poll() is None)
+
+
 def diagnosis():
     """What Linux sees of the screens and HDMI sound, as text for the settings (a photo of it says enough)."""
     lines = ["SCHERMEN (xrandr --current)"]
     for name, (connected, active) in sorted(output_states().items()):
         lines.append(f"  {name}: {'aangesloten' if connected else 'niets'}{', actief' if active else ''}")
+    software, name = renderer()
+    lines.append(f"BEELD: OpenGL op {'de PROCESSOR' if software else 'de videokaart'} ({name}); "
+                 f"vsync-compositor {'actief' if compositor_running() else 'uit'}")
+    try:
+        tearfree = re.findall(r"^(\S+) connected|^\s+TearFree: (\S+)", _run(["xrandr", "--current", "--props"]), re.M)
+        current = None
+        for output, value in tearfree:
+            current = output or current
+            if value:
+                lines.append(f"  {current}: TearFree {value}")
+    except OSError:
+        pass
     lines.append("VIDEOKAARTEN")
     for p in providers():
         lines.append(f"  {p['card']} ({p['name']}): {p['crtcs']} schermen, gekoppeld={p['linked']}, "
