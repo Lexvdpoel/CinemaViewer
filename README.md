@@ -163,7 +163,7 @@ CinemaViewer vraagt de beamer regelmatig naar zijn toestand, dus ook aan/uit met
 wordt gevolgd. Start je een film terwijl de beamer uit staat, dan volgt een melding. Wil je hem toch bij
 elke start aan: *Ook automatisch aanzetten bij het starten van CinemaViewer* (Instellingen → Apparaten).
 
-- **Projector**, met drie soorten besturing:
+- **Projector**, met deze soorten besturing:
   - *PJLink* (TCP-poort 4352) voor projectoren die dat kennen. Zet in het projectormenu netwerk-/PJLink-
     besturing aan en stand-by-stroom op *netwerk* (niet eco). Staat PJLink-beveiliging aan, vul dan het
     PJLink-wachtwoord in.
@@ -171,8 +171,14 @@ elke start aan: *Ook automatisch aanzetten bij het starten van CinemaViewer* (In
     het menu *Setup → Always-On Functions → Network* op *Yes*, geef hem een vast IP-adres en zet op zijn
     webpagina (inloggen als Administrator, *Network Settings*) *Command and Control Pass-Through* aan.
   - *InFocus via RS-232* met een USB-naar-serieel-kabel; de snelheid wordt automatisch gevonden.
+  - *Barco / projectiondesign F-serie* via netwerk (TCP-poort 1025) of RS-232 (standaard 19200 baud, recht
+    kabeltje): projectiondesign F12, F22, F32, F35, F82, F85, FL32, cineo en evo, en de Barco-versies (F22,
+    F32, F35, FL35, FS35, F85). Laat het netwerk in stand-by aan (geen diepe slaap). Leest lampstatus en
+    branduren van beide lampen en het statuslampje, en zet desgewenst lampmodus en eco.
+  - *Barco Pulse* (F80, F90, G60, UDX en nieuwer) via JSON-RPC op poort 9090 (of 9091 met TLS); haalt hem
+    zo nodig eerst uit eco-stand-by en meldt een storing of waarschuwing van de projector.
 
-  Bij InFocus leest *Verbinding testen / status opvragen* de status, storingen en voor **beide lampen** de
+  Bij InFocus en de Barco F-serie leest *Verbinding testen / status opvragen* de status, storingen en voor **beide lampen** de
   branduren en of ze branden. Optioneel zet CinemaViewer bij het aanzetten de lampmodus (beide lampen of
   één) en het lampvermogen (normaal/eco). Zolang CinemaViewer draait, controleert hij elke minuut de
   projector en meldt hij één keer als een lamp niet brandt terwijl beide lampen aan horen te staan, als de
@@ -209,6 +215,13 @@ kleur met de hand in, of kies je *Alles uit*, *Alles aan*, *Zoals pauze* of *Zoa
 een presentatie. Het licht blijft dan zo staan tot je op *Automatisch* klikt of er een film begint. Bij het
 afsluiten van CinemaViewer (ook bij uitschakelen van de computer of afmelden onder Linux) gaan alle lampen uit.
 
+Het **type** van een lamp (Instellingen → DMX) is een van de algemene types (dimmer, rgb, rgbw, cct) of een
+apparaat uit het menu *BeamZ → categorie → model → DMX-modus*: ruim 200 BeamZ-modellen (PAR's, bars,
+washes, strobes, moving heads, spots, lasers, rook- en effectmachines) met hun kanaalindeling uit de
+handleiding. Zet het apparaat zelf in dezelfde DMX-modus. CinemaViewer vult de kleur- en dimmerkanalen;
+overige kanalen (programma's, kleurwiel, gobo) staan op ‘gewoon licht’, pan/tilt op het midden. Bij een
+rookmachine volgt de rookuitgang het niveau van de staat.
+
 ## Instellingen
 
 Via het tandwiel rechtsboven (of Ctrl+,). Opgeslagen in `%APPDATA%\CinemaViewer\config.json`.
@@ -226,7 +239,7 @@ wis de waarde van `settings_password_hash` in `config.json` (maak er `""` van), 
 | Lokaal, USB & disc | Mediamappen toevoegen; USB- en disc-stations aan/uit |
 | Radio | Eigen lijst met radiozenders; zoeken per land via Radio Browser |
 | Pauze | Pauzeduur, aftelling en terugspoelen |
-| Apparaten | Projector (PJLink of InFocus via netwerk/RS-232, met lampstatus) en Denon-receiver automatisch aan/uit, ingang en volumeregeling → *Verbinding testen* |
+| Apparaten | Projector (PJLink, InFocus of Barco/projectiondesign via netwerk/RS-232, Barco Pulse, met lampstatus) en Denon-receiver automatisch aan/uit, ingang en volumeregeling → *Verbinding testen* |
 | Systeem | Automatisch starten met Windows; Ctrl+Alt+Del-menu beperken; wachtwoord wijzigen |
 
 Met **één scherm** gaan film en bediening op hetzelfde scherm: **Tab** of dubbelklik wisselt.

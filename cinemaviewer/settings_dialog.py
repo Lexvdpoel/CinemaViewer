@@ -5,18 +5,19 @@ import os
 import subprocess
 import time
 
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QGuiApplication
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QColorDialog, QDialog, QDoubleSpinBox,
-                               QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+                               QFormLayout, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu,
                                QPlainTextEdit, QPushButton, QScrollArea, QSlider, QSpinBox, QTabWidget, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
 from . import __version__, display, shares, updater
 from .cast.manager import default_name as default_cast_name
-from .devices import (DENON_INPUTS, INFOCUS_BAUDS, LAMP_MODES, LAMP_POWERS, DeviceError, InFocusProjector,
-                      Projector, Receiver)
-from .dmx import LAMP_TYPES, MUSIC_MODES, MUSIC_SPEEDS, STATE_NAMES, lamp_max, serial_ports
+from .devices import (DENON_INPUTS, INFOCUS_BAUDS, LAMP_MODES, LAMP_POWERS, BarcoProjector, DeviceError,
+                      InFocusProjector, Projector, PulseProjector, Receiver)
+from .dmx import (LAMP_TYPES, MUSIC_MODES, MUSIC_SPEEDS, PROFILES, STATE_NAMES, lamp_kind, lamp_max,
+                  lamp_type_label, lamp_width, serial_ports)
 from .dialogs import FramelessDialog, message, pick_folder
 from .screens import IdentifyOverlay
 from .security import check_password, hash_password
@@ -305,6 +306,55 @@ class ShareDialog(FramelessDialog):
         if not share["username"]:
             return share, None
         return share, (password if password or not self._editing else None)
+
+
+class LampTypeButton(QPushButton):
+    """Keuze van het lamptype: de vier algemene types direct, apparaten per merk en categorie in
+    submenu's (Merk ▸ categorie ▸ model ▸ DMX-modus), zodat de lijst niet in één keer openklapt."""
+
+    changed = Signal()
+
+    GENERIC = {"dimmer": "dimmer – 1 kanaal", "rgb": "rgb – 3 kanalen (rood/groen/blauw)",
+               "rgbw": "rgbw – 4 kanalen (+ wit)", "cct": "cct – 2 kanalen (warm/koud)"}
+
+    def __init__(self, kind="rgbw"):
+        super().__init__()
+        self.kind = kind
+        self.setStyleSheet("text-align: left; padding-left: 6px;")
+        menu = QMenu(self)
+        for key in LAMP_TYPES:
+            menu.addAction(self.GENERIC[key], lambda k=key: self.set_kind(k, emit=True))
+        tree = {}
+        for key, prof in PROFILES.items():
+            tree.setdefault(prof["brand"], {}).setdefault(prof["category"], {})                 .setdefault(prof["model"], []).append((key, prof))
+        if tree:
+            menu.addSeparator()
+        for brand, cats in sorted(tree.items()):
+            brand_menu = menu.addMenu(brand)
+            for cat, models in sorted(cats.items()):
+                cat_menu = brand_menu.addMenu(cat)
+                for model, modes in sorted(models.items(), key=lambda kv: kv[0].lower()):
+                    if len(modes) == 1:
+                        key, prof = modes[0]
+                        act = cat_menu.addAction(f"{prof['name']} ({prof['mode']})",
+                                                 lambda k=key: self.set_kind(k, emit=True))
+                        act.setToolTip(prof["name"])
+                        continue
+                    model_menu = cat_menu.addMenu(modes[0][1]["name"])
+                    for key, prof in modes:
+                        model_menu.addAction(f"{prof['mode']} – {len(prof['channels'])} kanalen",
+                                             lambda k=key: self.set_kind(k, emit=True))
+        self.setMenu(menu)
+        self.set_kind(kind)
+
+    def set_kind(self, kind, emit=False):
+        self.kind = kind
+        self.setText(lamp_type_label(kind))
+        prof = PROFILES.get(kind)
+        self.setToolTip(f"{prof['name']}, DMX-modus {prof['mode']}: {len(prof['channels'])} kanalen"
+                        if prof else self.GENERIC.get(kind, kind))
+        if emit:
+            self.changed.emit()
 
 
 class SettingsDialog(FramelessDialog):
@@ -1024,7 +1074,10 @@ class SettingsDialog(FramelessDialog):
         self.pj_auto.setChecked(p.get("auto_on", False))
         self.pj_protocol = QComboBox()
         for key, text in (("pjlink", "PJLink (netwerk)"), ("infocus_net", "InFocus via netwerk (poort 23)"),
-                          ("infocus_serial", "InFocus via RS-232 (seriële kabel)")):
+                          ("infocus_serial", "InFocus via RS-232 (seriële kabel)"),
+                          ("barco_net", "Barco / projectiondesign F-serie via netwerk (poort 1025)"),
+                          ("barco_serial", "Barco / projectiondesign F-serie via RS-232 (seriële kabel)"),
+                          ("barco_pulse", "Barco Pulse (F80, F90, G60, UDX…) via netwerk")):
             self.pj_protocol.addItem(text, key)
         self.pj_protocol.setCurrentIndex(max(0, self.pj_protocol.findData(p.get("protocol", "pjlink"))))
         self.pj_host = QLineEdit(p["host"])
@@ -1038,7 +1091,7 @@ class SettingsDialog(FramelessDialog):
         self.pj_port.setCurrentText(p.get("serial_port", ""))
         self.pj_baud = QComboBox()
         self.pj_baud.addItem("Automatisch", 0)
-        for baud in INFOCUS_BAUDS:
+        for baud in sorted(set(INFOCUS_BAUDS) | {4800}):
             self.pj_baud.addItem(f"{baud} baud", baud)
         self.pj_baud.setCurrentIndex(max(0, self.pj_baud.findData(int(p.get("baud") or 0))))
         self.pj_baud.setFixedWidth(160)
@@ -1551,11 +1604,12 @@ class SettingsDialog(FramelessDialog):
 
     def _projector_protocol_changed(self):
         proto = self.pj_protocol.currentData()
-        infocus = proto != "pjlink"
+        serial = proto.endswith("_serial")
+        lamps = proto not in ("pjlink", "barco_pulse")  # InFocus and the F-series: lamp hours and modes
         form = self.pj_form
-        for widget, visible in ((self.pj_host, proto != "infocus_serial"), (self.pj_password, proto == "pjlink"),
-                                (self.pj_port, proto == "infocus_serial"), (self.pj_baud, proto == "infocus_serial"),
-                                (self.pj_lamp_mode, infocus), (self.pj_lamp_power, infocus), (self.pj_warn, infocus)):
+        for widget, visible in ((self.pj_host, not serial), (self.pj_password, proto == "pjlink"),
+                                (self.pj_port, serial), (self.pj_baud, serial),
+                                (self.pj_lamp_mode, lamps), (self.pj_lamp_power, lamps), (self.pj_warn, lamps)):
             form.setRowVisible(widget, visible)
         self.pj_help.setText({
             "pjlink": "Sluit de projector aan op het netwerk (LAN-poort) en zet in het projectormenu PJLink / "
@@ -1568,7 +1622,21 @@ class SettingsDialog(FramelessDialog):
             "infocus_serial": "Verbind de RS-232-poort van de projector met een USB-naar-serieel-kabel (recht, geen "
                               "null-modem). ‘Automatisch’ probeert de gangbare snelheden en kiest de snelheid waarop "
                               "de projector antwoordt.",
-        }[proto] + ("" if not infocus else
+            "barco_net": "Voor projectiondesign-projectoren (F12, F22, F32, F35, F82, F85, FL32, cineo, evo) en de "
+                         "Barco-versies daarvan (F22, F32, F35, FL35, FS35, F85). CinemaViewer praat via TCP-poort "
+                         "1025. Geef de projector een vast IP-adres en laat het netwerk in stand-by aan (geen ‘diepe "
+                         "slaap’), anders kan hij niet via het netwerk worden aangezet. Na het aanzetten wacht "
+                         "CinemaViewer 30 seconden voordat hij de projector weer iets vraagt, zoals de handleiding "
+                         "voorschrijft.",
+            "barco_serial": "Voor projectiondesign- en Barco F-serie projectoren via de RS-232-poort: een "
+                            "USB-naar-serieel-kabel, recht (pinnen 2-2, 3-3, 5-5), geen null-modem. De projector "
+                            "staat standaard op 19200 baud; ‘Automatisch’ probeert 19200, 9600 en 4800.",
+            "barco_pulse": "Voor Barco-laserprojectoren op het Pulse-platform (F80, F90, G60, UDX, UDM, I600 en "
+                           "nieuwer). CinemaViewer praat via TCP-poort 9090 (of 9091 met TLS op nieuwere firmware). "
+                           "Geef de projector een vast IP-adres; vanuit eco-stand-by maakt CinemaViewer hem eerst "
+                           "wakker. Lampuren zijn er niet (laser); een storing of waarschuwing van de projector wordt "
+                           "gemeld.",
+        }[proto] + ("" if not proto.startswith("infocus") else
                     "\nTwee lampen: CinemaViewer leest de branduren en status van beide lampen, zet desgewenst de "
                     "lampmodus (beide of één) en het vermogen bij het aanzetten, en waarschuwt als een lamp niet "
                     "brandt, de projector een storing meldt of een lamp de ingestelde uren bereikt."))
@@ -1578,14 +1646,16 @@ class SettingsDialog(FramelessDialog):
         if cfg["protocol"] == "pjlink":
             self._device_test(self.pj_status, Projector.test, cfg["host"], cfg["password"])
             return
-        if not (cfg["serial_port"] if cfg["protocol"] == "infocus_serial" else cfg["host"]):
-            self.pj_status.setText("Kies eerst de seriële poort." if cfg["protocol"] == "infocus_serial"
-                                   else "Vul eerst het IP-adres in.")
+        serial = cfg["protocol"].endswith("_serial")
+        if not (cfg["serial_port"] if serial else cfg["host"]):
+            self.pj_status.setText("Kies eerst de seriële poort." if serial else "Vul eerst het IP-adres in.")
             self.pj_status.setStyleSheet("color: #E07A75;")
             return
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            text, ok = InFocusProjector.test(cfg), True
+            tester = {"barco_pulse": PulseProjector, "barco_net": BarcoProjector,
+                      "barco_serial": BarcoProjector}.get(cfg["protocol"], InFocusProjector)
+            text, ok = tester.test(cfg), True
         except (OSError, DeviceError) as e:
             text, ok = f"Mislukt: {e}", False
         finally:
@@ -1644,7 +1714,7 @@ class SettingsDialog(FramelessDialog):
         self.dmx_lamps.setHorizontalHeaderLabels(["Naam", "Type", "Startadres", "Max."])
         self.dmx_lamps.verticalHeader().setVisible(False)
         self.dmx_lamps.setColumnWidth(0, 170)
-        self.dmx_lamps.setColumnWidth(1, 110)
+        self.dmx_lamps.setColumnWidth(1, 230)
         self.dmx_lamps.setColumnWidth(2, 90)
         self.dmx_lamps.setColumnWidth(3, 90)
         self.dmx_lamps.horizontalHeaderItem(3).setToolTip(
@@ -1665,7 +1735,8 @@ class SettingsDialog(FramelessDialog):
             self._dmx_add_lamp_row(lamp)
         form.addRow("", _status(
             "Eén DMX-universe van 512 kanalen. Startadres 1–512; het type bepaalt het aantal kanalen: "
-            "dimmer = 1, rgb = 3 (rood/groen/blauw), rgbw = 4 (+ wit), cct = 2 (warm/koud). "
+            "dimmer = 1, rgb = 3 (rood/groen/blauw), rgbw = 4 (+ wit), cct = 2 (warm/koud). Onder ‘BeamZ’ "
+            "staan apparaten per categorie met hun DMX-modus: zet het apparaat zelf in dezelfde modus. "
             "Max. begrenst een lamp die te fel is: met 40% wordt 100% in een staat of op het lampenpaneel 40%."))
 
         self.dmx_states = {}
@@ -1784,32 +1855,46 @@ class SettingsDialog(FramelessDialog):
         lamps = []
         for r in range(self.dmx_lamps.rowCount()):
             name_item = self.dmx_lamps.item(r, 0)
-            combo = self.dmx_lamps.cellWidget(r, 1)
+            kind_btn = self.dmx_lamps.cellWidget(r, 1)
             addr_item = self.dmx_lamps.item(r, 2)
             max_spin = self.dmx_lamps.cellWidget(r, 3)
             text = addr_item.text().strip() if addr_item else ""
             lamps.append({"name": (name_item.text().strip() if name_item else "") or f"Lamp {r + 1}",
-                          "type": combo.currentText() if combo else "rgbw",
+                          "type": kind_btn.kind if kind_btn else "rgbw",
                           "address": int(text) if text.isdigit() else 1,
                           "max": max_spin.value() if max_spin else 100})
         return lamps
 
     def _dmx_add_lamp_row(self, lamp=None):
-        lamp = lamp or {}
         r = self.dmx_lamps.rowCount()
+        if lamp is None and r:  # een nieuwe lamp begint direct achter de vorige
+            prev = self._dmx_lamp_list()[-1]
+            lamp = {"address": min(512, prev["address"] + max(1, lamp_width(prev)))}
+        lamp = lamp or {}
         self.dmx_lamps.insertRow(r)
         self.dmx_lamps.setItem(r, 0, QTableWidgetItem(lamp.get("name", f"Lamp {r + 1}")))
-        combo = QComboBox()
-        combo.addItems(LAMP_TYPES)
-        combo.setCurrentText(lamp.get("type", "rgbw"))
-        combo.currentIndexChanged.connect(self._rebuild_dmx_states)
-        self.dmx_lamps.setCellWidget(r, 1, combo)
+        kind_btn = LampTypeButton(lamp.get("type", "rgbw"))
+        kind_btn.changed.connect(lambda b=kind_btn: self._dmx_type_changed(b))
+        self.dmx_lamps.setCellWidget(r, 1, kind_btn)
         self.dmx_lamps.setItem(r, 2, QTableWidgetItem(str(lamp.get("address", 1))))
         max_spin = QSpinBox()
         max_spin.setRange(1, 100)
         max_spin.setSuffix("%")
         max_spin.setValue(int(lamp_max(lamp)))
         self.dmx_lamps.setCellWidget(r, 3, max_spin)
+        self._rebuild_dmx_states()
+
+    def _dmx_type_changed(self, btn):
+        """Ander type: een standaardnaam (‘Lamp 2’) wordt de modelnaam."""
+        for r in range(self.dmx_lamps.rowCount()):
+            if self.dmx_lamps.cellWidget(r, 1) is not btn:
+                continue
+            prof = PROFILES.get(btn.kind)
+            name_item = self.dmx_lamps.item(r, 0)
+            if prof and name_item and (not name_item.text().strip() or name_item.text().startswith("Lamp ")
+                                       or name_item.text() in {p["model"] for p in PROFILES.values()}):
+                name_item.setText(prof["model"])
+            break
         self._rebuild_dmx_states()
 
     def _dmx_remove_lamp(self):
@@ -1840,16 +1925,17 @@ class SettingsDialog(FramelessDialog):
             rows = []
             for i, lamp in enumerate(lamps):
                 entry = rows_data[i] if i < len(rows_data) else {}
-                color = list(entry.get("color") or []) or ([255, 255, 255] if lamp["type"] != "dimmer" else [])
+                kind = lamp_kind(lamp)
+                color = list(entry.get("color") or []) or ([255, 255, 255] if kind != "dimmer" else [])
                 level = int(max(0, min(100, float(entry.get("level", 50)))))
                 grid.addWidget(QLabel(lamp["name"]), i, 0)
-                row = {"color": color, "type": lamp["type"], "btn": None}
+                row = {"color": color, "type": kind, "btn": None}
                 col = 1
-                if lamp["type"] != "dimmer":
+                if kind != "dimmer":
                     btn = QPushButton()
                     btn.setFixedSize(30, 20)
                     btn.clicked.connect(lambda _, r=row: self._pick_color(r))
-                    self._dmx_paint_btn(btn, color, lamp["type"])
+                    self._dmx_paint_btn(btn, color, kind)
                     grid.addWidget(btn, i, 1)
                     row["btn"] = btn
                     col = 2

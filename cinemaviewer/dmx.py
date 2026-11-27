@@ -12,6 +12,8 @@ import time
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from .fixtures_beamz import BEAMZ
+
 ARTNET_PORT = 6454
 FRAME_LEN = 512
 TICK_MS = 40
@@ -35,6 +37,58 @@ MUSIC_MODES = {  # wat een lamp doet in de muziekstand
 MUSIC_SPEEDS = {"fast": ("Snel", 0.06), "normal": ("Normaal", 0.15), "calm": ("Rustig", 0.4)}
 
 
+def _profile_kind(channels):
+    """Het kleurmodel van een apparaat aan de hand van zijn kanalen: bepaalt de kleurkiezer."""
+    roles = {c for c in channels if isinstance(c, str)}
+    if {"r", "g", "b"} <= roles or {"cyan", "magenta", "yellow"} <= roles:
+        return "rgbw" if "w" in roles else "rgb"
+    if {"ww", "cw"} <= roles:
+        return "cct"
+    return "dimmer"
+
+
+def _load_profiles():
+    profiles = {}
+    for f in BEAMZ:
+        key = f"beamz/{f['model']}/{f['mode']}"
+        profiles[key] = {"brand": "BeamZ", "model": f["model"], "name": f["name"], "category": f["category"],
+                         "mode": f["mode"], "channels": list(f["channels"]),
+                         "kind": _profile_kind(f["channels"])}
+    return profiles
+
+
+# apparaatprofielen: type "beamz/<model>/<modus>" → kanaalindeling (zie fixtures_beamz.py)
+PROFILES = _load_profiles()
+
+
+def lamp_profile(lamp):
+    """Het apparaatprofiel van een lamp, of None voor de vier algemene types."""
+    return PROFILES.get(lamp.get("type"))
+
+
+def lamp_kind(lamp):
+    """Het kleurmodel van een lamp: dimmer, rgb, rgbw of cct (ook voor een apparaatprofiel)."""
+    kind = lamp.get("type", "rgbw")
+    if kind in CHANNELS:
+        return kind
+    prof = PROFILES.get(kind)
+    return prof["kind"] if prof else "dimmer"
+
+
+def lamp_type_label(kind):
+    """Korte tekst voor een type: 'rgbw' of 'BeamZ BBP94 (10ch)'."""
+    prof = PROFILES.get(kind)
+    if prof is None:
+        return kind if kind in CHANNELS else f"{kind} (onbekend)"
+    return f"{prof['brand']} {prof['model']} ({prof['mode']})"
+
+
+def lamp_width(lamp):
+    """Aantal DMX-kanalen dat een lamp inneemt."""
+    prof = lamp_profile(lamp)
+    return len(prof["channels"]) if prof else CHANNELS.get(lamp.get("type"), 0)
+
+
 def lamp_max(lamp):
     """Het maximale niveau van een lamp (1–100%): 100% in een staat of op het lampenpaneel wordt dit."""
     try:
@@ -48,6 +102,11 @@ def lamp_channels(lamp, color, level):
     geschaald naar het maximum van de lamp."""
     lv = max(0.0, min(100.0, float(level))) / 100.0 * lamp_max(lamp) / 100.0
     kind = lamp.get("type", "rgbw")
+    prof = PROFILES.get(kind)
+    if prof is not None:
+        return _profile_channels(prof, color, lv)
+    if kind not in CHANNELS:
+        return []
     if kind == "dimmer":
         return [int(round(255 * lv))]
     c = list(color or [])
@@ -57,6 +116,49 @@ def lamp_channels(lamp, color, level):
     else:
         c = (c + [0, 0, 0, 0])[:want]
     return [int(round(max(0, min(255, int(v))) * lv)) for v in c[:want]]
+
+
+_COLOR_ROLES = ("r", "g", "b", "w", "a", "uv", "ww", "cw", "lime")
+_FIXED_ROLES = {"pan": 128, "tilt": 128}  # midden; strobe, fijn-kanalen en onbekend: 0
+
+
+def _profile_channels(prof, color, lv):
+    """Kanalen van een apparaat: met een masterdimmer gaat het niveau daarop en blijft de kleur vol
+    (meer resolutie), anders worden de kleurkanalen zelf gedimd. Vaste waarden gaan ongewijzigd mee.
+    Een rookmachine heeft 'fog' (de uitgang) in plaats van een masterdimmer."""
+    channels = prof["channels"]
+    kind = prof["kind"]
+    has_dim = "dim" in channels
+    c = [max(0, min(255, int(v))) for v in (color or [])]
+    col = {}
+    if kind in ("rgb", "rgbw"):
+        r, g, b, w = (c + [255, 255, 255, 0] if not c else c + [0, 0, 0, 0])[:4]
+        col = {"r": r, "g": g, "b": b, "w": w if kind == "rgbw" else 0}
+    elif kind == "cct":
+        warm, cold = (c + [255, 0])[:2] if c else (255, 0)
+        col = {"ww": warm, "cw": cold}
+    else:  # één kleur (wit, UV, rook...): alle lichtkanalen vol, het niveau doet de rest
+        col = {role: 255 for role in _COLOR_ROLES}
+    scale = 1.0 if has_dim else lv
+    dim16 = int(round(65535 * lv))
+    out = []
+    for ch in channels:
+        if isinstance(ch, int):
+            out.append(max(0, min(255, ch)))
+        elif ch == "dim":
+            out.append(dim16 >> 8)
+        elif ch == "fog":  # rook/haze/sneeuw: de hoofduitgang volgt het niveau, eventuele LED's ook
+            out.append(int(round(255 * lv)))
+        elif ch == "dim_fine":
+            out.append(dim16 & 0xFF)
+        elif ch in ("cyan", "magenta", "yellow"):  # subtractief: wit = geen filter
+            src = {"cyan": "r", "magenta": "g", "yellow": "b"}[ch]
+            out.append(0 if kind not in ("rgb", "rgbw") else 255 - col.get(src, 255))
+        elif ch in _COLOR_ROLES:
+            out.append(int(round(col.get(ch, 0) * scale)))
+        else:
+            out.append(_FIXED_ROLES.get(ch, 0))
+    return out
 
 
 class _Output:
@@ -403,7 +505,7 @@ class DmxEngine(QObject):
             elif mode == "flash":
                 level *= self._flash if sens else 0.0
             elif mode == "color":
-                if lamp.get("type") in ("rgb", "rgbw"):
+                if lamp_kind(lamp) in ("rgb", "rgbw"):
                     color = [int(255 * bass), int(255 * m), int(255 * t)]
                     level *= 0.3 + 0.7 * max(bass, m, t)
                 else:  # a single colour: just the strength of the music

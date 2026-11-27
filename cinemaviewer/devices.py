@@ -1,14 +1,17 @@
-"""Control of the projector (PJLink, or InFocus over the network/RS-232) and the Denon receiver
+"""Control of the projector (PJLink, InFocus or projectiondesign/Barco over the network/RS-232, Barco
+Pulse) and the Denon receiver
 (Denon telnet protocol).
 
 Every device has its own worker thread, so a device that is slow or unreachable never blocks the UI.
 """
 
 import hashlib
+import json
 import queue
 import re
 import select
 import socket
+import ssl
 import threading
 import time
 
@@ -526,6 +529,427 @@ def format_infocus_status(s, cfg):
     return "\n".join(lines)
 
 
+# -- projector (projectiondesign / Barco F-series ASCII protocol, network port 1025 or RS-232) -------
+# ':POWR1\r' sets, ':POWR?\r' reads; the answer is '%001 POWR 000001\r' (six digits), a text value
+# 'e00001 <text>' or an error '!0000n'. The manual asks >= 0.5 s between commands and 30 s silence
+# after switching on. POST is the detailed power state; LST1/LST2 lamp status, LTR1/LTR2 lamp hours.
+# Covers projectiondesign F12/F22/F32/F35/F82/F85/FL32/cineo/evo and Barco F22/F32/F35/FL35/FS35/F85.
+BARCO_PORT = 1025
+BARCO_BAUDS = (19200, 9600, 4800)
+BARCO_GAP = 0.5
+BARCO_ON_SILENCE = 30.0
+BARCO_ERRORS = {"!00001": "geen toegang (toegangsniveau te laag)",
+                "!00002": "nu niet mogelijk (warmt op of koelt af?)",
+                "!00003": "niet beschikbaar op deze projector", "!00004": "waarde buiten bereik"}
+BARCO_POST = {"0": "off", "1": "off", "2": "warming", "3": "on", "4": "cooling", "5": "cooling", "6": "off",
+              "7": "warming", "8": "cooling"}
+BARCO_POST_TEXT = {"0": "diepe slaap", "1": "stand-by", "2": "warmt op", "3": "aan", "4": "koelt af",
+                   "5": "noodstop: koelt af", "6": "uit na storing", "7": "start op", "8": "sluit af"}
+BARCO_LAMP = {"0": "defect", "1": "warmt op", "2": "brandt", "3": "uit", "4": "koelt af", "5": "niet aanwezig"}
+BARCO_LED = {"0": "groen", "1": "groen knipperend", "2": "geel", "3": "geel knipperend", "4": "rood",
+             "5": "rood knipperend"}
+
+
+class BarcoLink:
+    """One session with a projectiondesign/Barco F-series projector over TCP 1025 or RS-232."""
+
+    def __init__(self, host="", serial_port="", baud=0, timeout=3.0):
+        self.host, self.serial_port, self.baud, self.timeout = host, serial_port, baud, timeout
+        self._sock = self._ser = None
+        self._buf = b""
+        self._last = 0.0
+
+    def __enter__(self):
+        if self.serial_port:
+            self._open_serial()
+        else:
+            try:
+                self._sock = socket.create_connection((self.host, BARCO_PORT), timeout=self.timeout)
+            except OSError as e:
+                raise DeviceError(f"niet bereikbaar op {self.host}:{BARCO_PORT} ({e.strerror or e}); blijft het "
+                                  "netwerk in stand-by aan (geen ‘diepe slaap’/eco-stand-by)?") from e
+        return self
+
+    def __exit__(self, *exc):
+        for conn in (self._sock, self._ser):
+            if conn is not None:
+                try:
+                    conn.close()
+                except OSError:
+                    pass
+
+    def _open_serial(self):
+        try:
+            import serial  # pyserial
+        except ImportError as e:
+            raise DeviceError("pyserial ontbreekt voor RS-232") from e
+        last = None
+        for baud in ([self.baud] if self.baud else BARCO_BAUDS):
+            try:
+                self._ser = serial.Serial(self.serial_port, baud, timeout=0.2)
+            except (OSError, serial.SerialException) as e:
+                raise DeviceError(f"seriële poort {self.serial_port} niet te openen: {e}") from e
+            if self.baud:
+                return
+            try:  # automatic speed: the speed at which the projector answers
+                self.query("POWR")
+                self.baud = baud
+                return
+            except DeviceError as e:
+                last = e
+                self._ser.close()
+                self._ser = None
+        raise DeviceError(f"geen antwoord op {self.serial_port} (19200/9600/4800 geprobeerd): {last}")
+
+    def _send(self, data):
+        if self._ser is not None:
+            self._ser.write(data)
+        else:
+            self._sock.sendall(data)
+
+    def _recv(self):
+        if self._ser is not None:
+            return self._ser.read(256)
+        if not select.select([self._sock], [], [], 0.2)[0]:
+            return b""
+        data = self._sock.recv(256)
+        if not data:
+            raise DeviceError("verbinding verbroken door de projector")
+        return data
+
+    def _exchange(self, mnem, text):
+        wait = self._last + BARCO_GAP - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        self._buf = b""
+        self._send(f":{text}\r".encode("ascii"))
+        end = time.monotonic() + self.timeout
+        try:
+            while time.monotonic() < end:
+                self._buf += self._recv()
+                while re.search(rb"[\r\n]", self._buf):
+                    line, self._buf = re.split(rb"[\r\n]", self._buf, maxsplit=1)
+                    value = _barco_value(line.decode("ascii", "replace"), mnem)
+                    if value is not None:
+                        return value
+            raise DeviceError(f"geen antwoord op :{text}")
+        finally:
+            self._last = time.monotonic()
+
+    def query(self, mnem):
+        """Value of a read command: '1' from '%001 POWR 000001', text values as they come."""
+        return self._exchange(mnem.upper(), f"{mnem.upper()}?")
+
+    def command(self, mnem, value):
+        return self._exchange(mnem.upper(), f"{mnem.upper()}{int(value)}")
+
+    def try_query(self, mnem):
+        try:
+            return self.query(mnem)
+        except DeviceError:
+            return None
+
+
+def _barco_value(line, mnem):
+    """The value in a reply line for mnem ('%001 POWR 000001' -> '1'), None for other lines."""
+    parts = line.strip().split(None, 2)
+    if len(parts) < 2 or not parts[0].startswith("%") or parts[1].upper() != mnem:
+        return None
+    value = parts[2].strip() if len(parts) > 2 else ""
+    if value[:6] in BARCO_ERRORS:
+        raise DeviceError(f"{mnem}: {BARCO_ERRORS[value[:6]]}")
+    if value.lower().startswith("e00001"):
+        return value[6:].strip().strip('"')
+    if value.isdigit():
+        return value.lstrip("0") or "0"
+    return value
+
+
+def barco_link(cfg, timeout=3.0):
+    serial_port = cfg.get("serial_port", "") if cfg.get("protocol") == "barco_serial" else ""
+    baud = int(cfg.get("baud") or 0)
+    return BarcoLink(cfg.get("host", ""), serial_port, baud if baud in BARCO_BAUDS else 0, timeout)
+
+
+def _barco_state(link):
+    post = link.try_query("POST")
+    if post in BARCO_POST:
+        return BARCO_POST[post]
+    return "on" if link.query("POWR") == "1" else "off"
+
+
+class BarcoProjector(_ProjectorWorker):
+    """projectiondesign / Barco F-series: on/off, lamp settings after switching on, and every minute
+    the lamps and the status LED, reported once through on_error when something is wrong."""
+
+    POLL = 60.0
+
+    def __init__(self, cfg, on_error, on_state=None):
+        self.cfg = dict(cfg)
+        self._quiet_until = 0.0
+        self._settings_due = False
+        self._poll_at = time.monotonic() + 20
+        self._reported = set()
+        self.status = {}
+        super().__init__(on_error, on_state)
+
+    def _read_state(self):
+        with barco_link(self.cfg) as link:
+            return _barco_state(link)
+
+    def _power(self, on, retry_until):
+        """'Not available' while it cools down or warms up: keep trying until retry_until."""
+        while True:
+            try:
+                with barco_link(self.cfg) as link:
+                    if on and _barco_state(link) in ("on", "warming"):
+                        self._settings_due = True
+                        return
+                    link.command("POWR", 1 if on else 0)
+                break
+            except DeviceError as e:
+                if "nu niet mogelijk" not in str(e) or time.monotonic() > retry_until:
+                    raise
+            time.sleep(5)
+        if on:  # the manual asks for 30 s silence after switching on
+            self._quiet_until = time.monotonic() + BARCO_ON_SILENCE
+            self._settings_due = True
+
+    def _apply_lamp_settings(self, link):
+        mode = {"dual": 2, "single": 0}.get(self.cfg.get("lamp_mode", ""))
+        if mode is not None and link.try_query("LMOD") not in (None, str(mode)):
+            link.command("LMOD", mode)
+        eco = {"normal": 0, "eco": 1}.get(self.cfg.get("lamp_power", ""))
+        if eco is not None and link.try_query("ECOM") not in (None, str(eco)):
+            link.command("ECOM", eco)
+
+    def _off(self):
+        with barco_link(self.cfg) as link:
+            link.command("POWR", 0)
+
+    def _idle(self):
+        now = time.monotonic()
+        if now < self._quiet_until:
+            return
+        super()._idle()  # power state
+        if self.state != "on":
+            return
+        try:
+            if self._settings_due:
+                self._settings_due = False
+                with barco_link(self.cfg) as link:
+                    self._apply_lamp_settings(link)
+            if now < self._poll_at:
+                return
+            self._poll_at = now + self.POLL
+            self.status = read_barco_status(barco_link(self.cfg))
+        except (OSError, DeviceError):
+            return  # unreachable for a moment: not worth a message every minute
+        for problem in barco_problems(self.status, self.cfg):
+            if problem not in self._reported:
+                self._reported.add(problem)
+                self.on_error(f"Projector: {problem}")
+
+    @staticmethod
+    def test(cfg):
+        return format_barco_status(read_barco_status(barco_link(cfg)), cfg)
+
+
+def read_barco_status(link):
+    """Everything worth knowing in one session; what this model does not have stays None."""
+    with link:
+        s = {"power": link.query("POWR")}
+        for key, code in (("post", "POST"), ("model", "MODL"), ("lamp1", "LST1"), ("lamp2", "LST2"),
+                          ("lamp1_hours", "LTR1"), ("lamp2_hours", "LTR2"), ("led", "LEST"),
+                          ("lamp_mode", "LMOD"), ("eco", "ECOM"), ("total_hours", "UTOT")):
+            s[key] = link.try_query(code)
+    return s
+
+
+def barco_problems(s, cfg):
+    out = []
+    if s.get("led") in ("4", "5"):
+        out.append("statuslampje staat op rood (storing)")
+    if s.get("post") in ("5", "6"):
+        out.append("noodstop na een storing (te warm?)")
+    for n in ("1", "2"):
+        if s.get(f"lamp{n}") == "0":
+            out.append(f"lamp {n} is defect")
+    limit = int(cfg.get("lamp_warn_hours") or 0)
+    for n in ("1", "2"):
+        hours = _hours(s.get(f"lamp{n}_hours"))
+        if limit and hours is not None and hours >= limit and s.get(f"lamp{n}") not in (None, "5"):
+            out.append(f"lamp {n} heeft {hours} uur gebrand (vervangen na ±{limit} uur)")
+    return out
+
+
+def format_barco_status(s, cfg):
+    state = BARCO_POST_TEXT.get(s.get("post") or "", {"0": "uit", "1": "aan"}.get(s.get("power"), "onbekend"))
+    lines = [f"{s.get('model') or 'projectiondesign/Barco-projector'} – {state}"]
+    for n in ("1", "2"):
+        if s.get(f"lamp{n}") in (None, "5"):
+            continue
+        hours = _hours(s.get(f"lamp{n}_hours"))
+        lines.append(f"Lamp {n}: " + ", ".join(x for x in (f"{hours} uur" if hours is not None else "",
+                                                           BARCO_LAMP.get(s[f"lamp{n}"], "")) if x))
+    extra = []
+    if s.get("lamp_mode") in ("0", "1", "2", "3"):
+        extra.append("modus: " + ("lamp 1", "lamp 2", "beide lampen", "automatisch wisselen")[int(s["lamp_mode"])])
+    if s.get("eco") in ("0", "1"):
+        extra.append("eco " + ("aan" if s["eco"] == "1" else "uit"))
+    if s.get("led") in BARCO_LED:
+        extra.append(f"statuslampje {BARCO_LED[s['led']]}")
+    if _hours(s.get("total_hours")) is not None:
+        extra.append(f"projector totaal {_hours(s['total_hours'])} uur")
+    if extra:
+        lines.append(", ".join(extra).capitalize())
+    problems = barco_problems(s, cfg)
+    if problems:
+        lines.append("Let op: " + "; ".join(problems))
+    return "\n".join(lines)
+
+
+# -- projector (Barco Pulse platform: JSON-RPC 2.0 over TCP 9090, newer firmware TLS on 9091) ------------
+# F80, F90, G60, UDX, UDM, I600 and later. A power command during warming up / cooling down is silently
+# ignored, so the state is checked first.
+PULSE_PORT = 9090
+PULSE_TLS_PORT = 9091
+PULSE_STATE = {"boot": "warming", "eco": "off", "standby": "off", "ready": "off", "conditioning": "warming",
+               "on": "on", "deconditioning": "cooling", "service": "off", "error": "off"}
+PULSE_STATE_TEXT = {"boot": "start op", "eco": "eco-stand-by", "standby": "stand-by", "ready": "gereed (uit)",
+                    "conditioning": "warmt op", "on": "aan", "deconditioning": "koelt af", "service": "servicemodus",
+                    "error": "storing"}
+
+
+def _pulse_connect(host, timeout):
+    try:
+        return socket.create_connection((host, PULSE_PORT), timeout=timeout)
+    except ConnectionRefusedError:
+        # firmware 2.10+: by default only TLS on 9091, with the projector's own (self-signed) certificate
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        raw = socket.create_connection((host, PULSE_TLS_PORT), timeout=timeout)
+        return ctx.wrap_socket(raw, server_hostname=host)
+
+
+def pulse_rpc(host, method, params=None, timeout=4.0):
+    """One JSON-RPC call; notifications in between are skipped."""
+    req = {"jsonrpc": "2.0", "method": method, "id": 1}
+    if params is not None:
+        req["params"] = params
+    try:
+        sock = _pulse_connect(host, timeout)
+    except OSError as e:
+        raise DeviceError(f"niet bereikbaar op {host}:{PULSE_PORT}/{PULSE_TLS_PORT} ({e.strerror or e})") from e
+    with sock:
+        sock.sendall((json.dumps(req) + "\n").encode("utf-8"))
+        return _pulse_reply(sock, method, timeout)
+
+
+def _pulse_reply(sock, method, timeout):
+    buf, dec = "", json.JSONDecoder()
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        chunk = sock.recv(4096)
+        if not chunk:
+            break
+        buf += chunk.decode("utf-8", "replace")
+        while buf.strip():
+            try:
+                msg, pos = dec.raw_decode(buf.lstrip())
+            except ValueError:
+                break  # incomplete
+            buf = buf.lstrip()[pos:]
+            if isinstance(msg, dict) and msg.get("id") == 1:
+                if "error" in msg:
+                    err = msg["error"] or {}
+                    raise DeviceError(f"{method}: {err.get('message') if isinstance(err, dict) else err}")
+                return msg.get("result")
+    raise DeviceError(f"geen antwoord op {method}")
+
+
+def pulse_get(host, prop, timeout=4.0):
+    return pulse_rpc(host, "property.get", {"property": prop}, timeout)
+
+
+class PulseProjector(_ProjectorWorker):
+    """Barco Pulse projectors (laser): on/off and a health check every minute while it is on."""
+
+    POLL = 60.0
+
+    def __init__(self, cfg, on_error, on_state=None):
+        self.host = cfg.get("host", "")
+        self._poll_at = time.monotonic() + 20
+        self._reported = set()
+        super().__init__(on_error, on_state)
+
+    def _state(self):
+        return str(pulse_get(self.host, "system.state", timeout=3.0) or "").lower()
+
+    def _read_state(self):
+        return PULSE_STATE.get(self._state(), "unreachable")
+
+    def _power(self, on, retry_until):
+        """Only sent from a stable state; otherwise wait (warming/cooling, eco wake-up) until the deadline."""
+        deadline = max(retry_until, time.monotonic() + 90)
+        while True:
+            state = self._state()
+            if on and state in ("on", "conditioning"):
+                return
+            if not on and state in ("standby", "ready", "eco", "deconditioning"):
+                return
+            if on and state == "eco":
+                pulse_rpc(self.host, "system.gotoready")
+            elif on and state in ("standby", "ready"):
+                pulse_rpc(self.host, "system.poweron")
+                return
+            elif not on and state == "on":
+                pulse_rpc(self.host, "system.poweroff")
+                return
+            if time.monotonic() > deadline:
+                raise DeviceError(f"blijft in de stand ‘{PULSE_STATE_TEXT.get(state, state)}’")
+            time.sleep(3)
+
+    def _off(self):
+        state = self._state()
+        if state in ("conditioning", "boot"):
+            raise DeviceError("warmt nog op; uitzetten kan pas als hij aan is")
+        if state == "on":
+            pulse_rpc(self.host, "system.poweroff", timeout=3.0)
+
+    def _idle(self):
+        super()._idle()
+        now = time.monotonic()
+        if self.state != "on" or now < self._poll_at:
+            return
+        self._poll_at = now + self.POLL
+        try:
+            health = str(pulse_get(self.host, "system.health") or "").lower()
+        except (OSError, DeviceError):
+            return
+        if health in ("warning", "error"):
+            problem = "meldt een storing" if health == "error" else "meldt een waarschuwing"
+            if problem not in self._reported:
+                self._reported.add(problem)
+                self.on_error(f"Projector: {problem} (zie het menu of de webpagina van de projector)")
+
+    @staticmethod
+    def test(cfg):
+        host = cfg.get("host", "")
+        state = str(pulse_get(host, "system.state") or "").lower()
+        values = []
+        for prop in ("system.modelname", "system.health", "illumination.state"):
+            try:
+                values.append(str(pulse_get(host, prop) or ""))
+            except DeviceError:
+                values.append("")
+        model, health, light = values
+        text = f"{model or 'Barco Pulse-projector'} – {PULSE_STATE_TEXT.get(state, state or 'onbekend')}"
+        extra = [x for x in (f"gezondheid: {health}" if health else "", f"licht: {light}" if light else "") if x]
+        return text + ("\n" + ", ".join(extra).capitalize() if extra else "")
+
+
 # -- Denon receiver --------------------------------------------------------------
 class Receiver(_Worker):
     """Keeps one telnet connection open (the receiver accepts only one) and reports volume/mute
@@ -857,7 +1281,19 @@ def _keepalive(sock):
 
 def projector_configured(p):
     """Network protocols need an address, RS-232 a serial port."""
-    return bool(p.get("serial_port") if p.get("protocol") == "infocus_serial" else p.get("host"))
+    return bool(p.get("serial_port") if str(p.get("protocol", "")).endswith("_serial") else p.get("host"))
+
+
+def make_projector(p, on_error, on_state=None):
+    """The worker for the chosen protocol."""
+    proto = p.get("protocol", "pjlink")
+    if proto == "pjlink":
+        return Projector(p["host"], p["password"], on_error, on_state)
+    if proto == "barco_pulse":
+        return PulseProjector(p, on_error, on_state)
+    if proto.startswith("barco_"):
+        return BarcoProjector(p, on_error, on_state)
+    return InFocusProjector(p, on_error, on_state)
 
 
 class Devices(QObject):
@@ -890,10 +1326,7 @@ class Devices(QObject):
         p, r = self.cfg["projector"], self.cfg["receiver"]
         if p["enabled"] and projector_configured(p):
             if self.projector is None:
-                if p.get("protocol", "pjlink") == "pjlink":
-                    self.projector = Projector(p["host"], p["password"], self.error.emit, self.projector_state.emit)
-                else:
-                    self.projector = InFocusProjector(p, self.error.emit, self.projector_state.emit)
+                self.projector = make_projector(p, self.error.emit, self.projector_state.emit)
             if p.get("auto_on"):
                 self.projector.power(True, retry_until=time.monotonic() + COOLDOWN_WAIT)
         else:

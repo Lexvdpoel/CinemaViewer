@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QColorDialog, QDial
 from .browser import BrowserPanel
 from .cast import ytdl
 from .dialogs import ImportDialog
+from .dmx import lamp_kind
 from .presentation import PresentationPanel
 from .models import SOURCE_LABELS, MediaItem, fmt_runtime, fmt_size, fmt_time
 from .screens import place_window
@@ -1106,7 +1107,7 @@ class LampPanel(QWidget):
                 w.deleteLater()
         self._rows = []
         for i, lamp in enumerate(lamps):
-            kind = lamp.get("type", "rgbw")
+            kind = lamp_kind(lamp)
             name = label(lamp.get("name") or f"Lamp {i + 1}", "Body")
             name.setMinimumWidth(120)
             self.grid.addWidget(name, i, 0)

@@ -55,6 +55,7 @@ DEFAULTS = {
     "plex": {"enabled": False, "url": "", "token": ""},
     # switched on when CinemaViewer starts and off when it closes (over the network)
     # protocol: "pjlink" | "infocus_net" (telnet port 23) | "infocus_serial" (RS-232, baud 0 = automatic)
+    #           | "barco_net" (projectiondesign/Barco F-series, TCP 1025) | "barco_serial" | "barco_pulse" (TCP 9090)
     # lamp_mode / lamp_power: "" = leave as set on the projector; lamp_warn_hours: 0 = no warning
     # auto_on: switch on when CinemaViewer starts; otherwise with the button in the top bar
     "projector": {"enabled": False, "auto_on": False, "protocol": "pjlink", "host": "", "password": "", "serial_port": "",
